@@ -48,6 +48,26 @@ git push --follow-tags     # CI (release.yml) kiểm tra, build, đóng gói và
 
 Link `releases/latest/download/mcp-loadout.tgz` luôn trỏ tới bản mới nhất; cài lại bằng đúng lệnh ở bước 1 để cập nhật.
 
+### Nhập một lượt mọi repo đang có config MCP viết tay
+
+```bash
+loadout import --all --dry-run   # quét các workspace, liệt kê repo có .mcp.json / .cursor/mcp.json viết tay và việc sẽ làm
+loadout import --all --sync      # nhập tất cả rồi thay các file viết tay bằng file sinh ra (giữ bản .bak)
+```
+
+Hoặc trên `loadout ui`: mục **MCP configs to import** ở Overview, nút **Import all**.
+
+Khi nhiều repo có server trùng tên:
+
+| Trường hợp | Xử lý |
+|---|---|
+| Tên chưa có trong registry | Tạo server dùng chung |
+| Đã có, nội dung giống hệt | Dùng lại |
+| Đã có, khác nội dung, chưa repo nào dùng (ví dụ server mẫu) | Thay bằng định nghĩa của repo |
+| Đã có, khác nội dung, repo khác đang dùng | Giữ thành server riêng của repo này, để không repo nào bị đổi cấu hình |
+
+Sau đó có thể gộp các bản riêng giống nhau bằng tham số (`{{ params.x }}`) trên trang server.
+
 ### Chuyển một repo đang có config MCP viết tay
 
 ```bash

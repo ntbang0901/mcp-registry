@@ -102,7 +102,7 @@ describe('repository-only servers', () => {
     const repo = detectRepo(gitRepo(join(base, 'svc'), 'git@github.com:acme/svc.git'));
     write(repo.root, '.mcp.json', JSON.stringify({ mcpServers: { tools: { command: 'node', args: [`${repo.root}/mcp.js`] } } }));
     const r = importRepo(registry(), repo, { repoOnly: true });
-    expect(r).toMatchObject({ created: ['tools'], attached: [] });
+    expect(r).toMatchObject({ own: ['tools'], attached: [] });
     expect(readFileSync(join(root, 'repos/github.com/acme/svc/tools.yaml'), 'utf8')).toContain('{{ repo.root }}/mcp.js');
     expect(readFileSync(join(root, 'bindings.yaml'), 'utf8')).not.toContain('acme/svc');
     expect(resolveRepo(registry(), repo).map((s) => s.name)).toEqual(['tools']);

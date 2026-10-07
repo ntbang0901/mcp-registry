@@ -78,6 +78,14 @@ describe('loadRegistry', () => {
 });
 
 describe('bindings editing', () => {
+  it('writes one repository per line when starting from an empty flow map', () => {
+    const root = registry({ 'bindings.yaml': 'repositories: {}\n' });
+    const path = join(root, 'bindings.yaml');
+    attachServers(path, 'github.com/acme/a', ['linkup']);
+    attachServers(path, 'github.com/acme/b', ['linkup']);
+    expect(readFileSync(path, 'utf8')).toBe('repositories:\n  github.com/acme/a: [linkup]\n  github.com/acme/b: [linkup]\n');
+  });
+
   it('attaches and detaches while preserving comments and style', () => {
     const root = registry({
       'bindings.yaml': '# my comment\nrepositories:\n  github.com/acme/app: [linkup] # inline\n',

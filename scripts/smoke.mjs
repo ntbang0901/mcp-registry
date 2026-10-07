@@ -62,12 +62,12 @@ check('init --from clones the registry', existsSync(join(registry, 'servers')));
 check('validate', /0 error\(s\)/.test(run(['validate'])));
 
 const imported = run(['import'], { cwd: app });
-check('import attaches the servers', /attached: context7, linkup/.test(imported), imported);
+check('import attaches the servers', /attached:\s+context7, linkup/.test(imported), imported);
 
 const synced = run(['sync', '--force'], { cwd: app });
 const mcp = readFileSync(join(app, '.mcp.json'), 'utf8');
 check('sync replaces the hand-written file', /replaced/.test(synced), synced);
-check('generated config reads the key from the environment', mcp.includes('Bearer ${LINKUP_API_KEY}'), mcp);
+check('generated config reads the key from the environment', mcp.includes('${LINKUP_API_KEY}') && !mcp.includes('lk-SMOKE'), mcp);
 check('cursor config generated', existsSync(join(app, '.cursor', 'mcp.json')));
 check('generated files are git-excluded', readFileSync(join(app, '.git', 'info', 'exclude'), 'utf8').includes('/.mcp.json'));
 check('status is clean', /up to date/.test(run(['status'], { cwd: app })));
@@ -87,6 +87,36 @@ check('attach refuses a server with missing required values', /needs values for 
 run(['set', 'pg', 'db=app_db', '--attach'], { cwd: app });
 check('set --attach fills the value and syncs', readFileSync(join(app, '.mcp.json'), 'utf8').includes('app_db'));
 check('registry still valid', /0 error\(s\)/.test(run(['validate'])));
+
+// Bulk import: two more repositories with hand-written configs, found by scanning the workspace.
+for (const [name, db] of [
+  ['svc-a', 'a_db'],
+  ['svc-b', 'b_db'],
+]) {
+  const dir = join(code, name);
+  mkdirSync(dir, { recursive: true });
+  git(dir, 'init', '-q');
+  git(dir, 'remote', 'add', 'origin', `git@github.com:acme/${name}.git`);
+  writeFileSync(
+    join(dir, '.mcp.json'),
+    JSON.stringify({ mcpServers: { db: { command: 'npx', args: ['-y', '@acme/db-mcp@2.0.0', '--db', db] } } }),
+  );
+}
+const planned = run(['import', '--all', '--dry-run']);
+check(
+  'import --all finds every hand-written config',
+  /acme\/svc-a/.test(planned) && /acme\/svc-b/.test(planned) && !/acme\/app\b/.test(planned),
+  planned,
+);
+const bulk = run(['import', '--all', '--sync']);
+check('conflicting definitions stay per repository', /own:\s+db/.test(bulk), bulk);
+check(
+  'bulk import generates each config',
+  readFileSync(join(code, 'svc-a', '.mcp.json'), 'utf8').includes('a_db') &&
+    readFileSync(join(code, 'svc-b', '.mcp.json'), 'utf8').includes('b_db'),
+);
+check('nothing left to import', /No hand-written MCP configs/.test(run(['import', '--all'])));
+check('registry valid after bulk import', /0 error\(s\)/.test(run(['validate'])));
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall smoke checks passed');
 process.exit(failures ? 1 : 0);

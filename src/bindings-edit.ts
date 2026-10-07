@@ -19,6 +19,8 @@ function loadDoc(path: string): Document {
     repos = new YAMLMap();
     doc.set('repositories', repos);
   }
+  // `repositories: {}` is a flow map; keep one repository per line once entries are added.
+  (repos as YAMLMap).flow = false;
   return doc;
 }
 

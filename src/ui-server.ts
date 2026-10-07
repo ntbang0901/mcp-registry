@@ -17,6 +17,7 @@ import {
   type AddEntry,
   type FormInput,
 } from './add.js';
+import { importCandidates, importRepo, ImportSession } from './importer.js';
 import { requiredParams, updateBindingParams } from './params.js';
 import { attachServers, detachServers } from './bindings-edit.js';
 import { stateDir, type Config } from './config.js';
@@ -129,6 +130,14 @@ function buildState(opts: UiOptions): Json {
   }));
   const known = new Set(knownRepos(registry));
   const unregistered = [...clones].filter(([id]) => !known.has(id)).map(([id, cs]) => ({ id, path: cs[0].root }));
+  // Clones (registered or not) whose MCP config files were written by hand: ready to import.
+  const importable = importCandidates(registry, [...clones.values()].flat(), state).map((c) => ({
+    id: c.repo.id,
+    path: c.repo.root,
+    files: c.files,
+    servers: c.servers,
+    registered: c.registered,
+  }));
   let changes: string[] = [];
   try {
     changes = (git(opts.registryRoot, ['status', '--porcelain', '--', ...REGISTRY_PATHS]) ?? '').split('\n').filter(Boolean);
@@ -143,6 +152,7 @@ function buildState(opts: UiOptions): Json {
     repoOnly,
     repos,
     unregistered,
+    importable,
     problems,
     changes,
   };
@@ -236,6 +246,36 @@ async function handleApi(req: IncomingMessage, url: URL, body: Json, opts: UiOpt
         { replace: true, attach: body.attach === true },
       );
       return { params };
+    }
+    case 'POST /api/import': {
+      const reg = registry();
+      const state = State.load(stateDir());
+      const wanted = Array.isArray(body.repos) ? new Set(body.repos.map((r) => normalizeRepoId(String(r)))) : undefined;
+      const clones = [...localClones(opts.config).values()].flat();
+      const candidates = importCandidates(reg, clones, state).filter((c) => !wanted || wanted.has(c.repo.id));
+      if (!candidates.length) throw new LoadoutError('No hand-written MCP config found to import');
+      const session = new ImportSession(reg, { state });
+      const results = [];
+      for (const c of candidates) {
+        try {
+          results.push(importRepo(reg, c.repo, { session }));
+        } catch (e) {
+          results.push({ repo: c.repo.id, error: (e as Error).message });
+        }
+      }
+      // Replace the hand-written files with generated ones (a .bak is kept), so each repository is managed from now on.
+      if (body.sync === true) {
+        const fresh = loadValidRegistry(opts.registryRoot).registry;
+        for (const c of candidates) {
+          try {
+            syncRepo(fresh, c.repo, opts.config.targets, state, { force: true });
+          } catch {
+            /* reported by the repository page */
+          }
+        }
+        state.save();
+      }
+      return { results };
     }
     case 'POST /api/sync':
       return syncClones(opts, body);

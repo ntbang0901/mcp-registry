@@ -109,3 +109,20 @@ test('overview reports work to do and fits a phone screen', async ({ page }) => 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+test('imports every hand-written MCP config found in the workspace', async ({ page }) => {
+  for (const [name, db] of [['web', 'web_db']] as const) {
+    writeFileSync(
+      join(tmp, 'code', name, '.mcp.json'),
+      JSON.stringify({ mcpServers: { db: { command: 'npx', args: ['-y', '@acme/db-mcp@2.0.0', '--db', db] } } }),
+    );
+  }
+  await page.goto(url);
+  const section = page.locator('.section', { hasText: 'MCP configs to import' });
+  await expect(section).toContainText('github.com/acme/web');
+  await expect(section).toContainText('db');
+  await section.getByRole('button', { name: 'Import', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: /acme\/web/ })).toBeVisible();
+  await expect.poll(() => repoFile('web', '.mcp.json')).toContain('"db"');
+  expect(repoFile('web', '.mcp.json.bak')).toContain('web_db');
+});

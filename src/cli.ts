@@ -26,7 +26,7 @@ import {
   type Config,
 } from './config.js';
 import { LoadoutError } from './errors.js';
-import { importRepo } from './importer.js';
+import { findImportCandidates, importRepo, ImportSession } from './importer.js';
 import {
   BINDINGS_FILE,
   formatProblems,
@@ -371,27 +371,69 @@ program
 
 program
   .command('import')
-  .description("Import the current repository's existing .mcp.json / .cursor/mcp.json into the registry")
-  .option('--repo-only', "import as this repository's own servers (repos/<repo>/) instead of shared ones")
+  .description('Import hand-written .mcp.json / .cursor/mcp.json into the registry (current repository, or --all)')
+  .option('--all', 'scan the configured workspaces and import every repository with a hand-written MCP config')
+  .option('--repo-only', "import as each repository's own servers (repos/<repo>/) instead of shared ones")
+  .option('--sync', 'then replace the hand-written files with generated ones (a .bak is kept)')
   .option('--dry-run', 'show what would be imported without writing')
-  .action((opts: { dryRun?: boolean; repoOnly?: boolean }, cmd: Command) => {
-    const { root } = context(cmd);
+  .addHelpText(
+    'after',
+    `
+A server name that already exists with the same definition is reused. A different definition
+replaces the shared one when no repository uses it yet; otherwise it is kept as that repository's
+own server, so no repository silently switches to another one's configuration.`,
+  )
+  .action((opts: { all?: boolean; dryRun?: boolean; repoOnly?: boolean; sync?: boolean }, cmd: Command) => {
+    const { config, root } = context(cmd);
     const { registry } = loadValidRegistry(root);
-    const repo = detectRepo(process.cwd());
-    const r = importRepo(registry, repo, opts);
-    console.log(`${repo.id}${opts.dryRun ? '  [dry run]' : ''}`);
-    console.log(`  read:     ${r.sources.join(', ')}`);
-    console.log(`  new:      ${r.created.join(', ') || '-'}`);
-    console.log(`  existing: ${r.reused.join(', ') || '-'}`);
-    if (opts.repoOnly) console.log(`  stored in: repos/${repo.id}/ (active for this repository only)`);
-    else console.log(`  attached: ${r.attached.join(', ') || '-'}`);
-    for (const n of r.notes) console.log(`  ! ${n}`);
-    if (!opts.dryRun) {
-      console.log('\nnext:');
-      console.log(`  1. review & commit the registry:  git -C ${root} status`);
-      console.log('  2. replace the hand-written files: loadout sync --force   (backups: *.bak)');
-      console.log('  3. stop tracking them in this repo if they were committed: git rm --cached <file>');
+    const state = State.load(stateDir());
+    let repos: RepoContext[];
+    if (opts.all) {
+      if (!config.workspaces.length)
+        throw new LoadoutError('No workspaces configured. Run: loadout init --workspace <dir-with-your-repos>');
+      repos = findImportCandidates(registry, config.workspaces, state).map((c) => c.repo);
+      if (!repos.length) return console.log(`No hand-written MCP configs found under ${config.workspaces.join(', ')}`);
+    } else {
+      repos = [detectRepo(process.cwd())];
     }
+    const session = new ImportSession(registry, { dryRun: opts.dryRun, state });
+    const imported: RepoContext[] = [];
+    let failed = 0;
+    for (const repo of repos) {
+      let r;
+      try {
+        r = importRepo(registry, repo, { ...opts, session });
+      } catch (e) {
+        if (!opts.all) throw e;
+        console.log(`${repo.id}\n  ! skipped: ${(e as Error).message}`);
+        failed++;
+        continue;
+      }
+      imported.push(repo);
+      const list = (xs: string[]) => xs.join(', ') || '-';
+      console.log(`${repo.id}${opts.dryRun ? '  [dry run]' : ''}`);
+      console.log(`  read:      ${r.sources.join(', ')}`);
+      if (r.created.length) console.log(`  new:       ${list(r.created)}`);
+      if (r.reused.length) console.log(`  existing:  ${list(r.reused)}`);
+      if (r.replaced.length) console.log(`  replaced:  ${list(r.replaced)}  (unused shared definition updated)`);
+      if (r.own.length) console.log(`  own:       ${list(r.own)}  (repos/${repo.id}/)`);
+      if (!opts.repoOnly) console.log(`  attached:  ${list(r.attached)}`);
+      for (const n of r.notes) console.log(`  ! ${n}`);
+    }
+    if (opts.all)
+      console.log(
+        `\n${imported.length} repositor${imported.length === 1 ? 'y' : 'ies'} imported${failed ? `, ${failed} skipped` : ''}`,
+      );
+    if (opts.dryRun || !imported.length) return;
+    if (opts.sync) {
+      console.log('');
+      runSync(loadValidRegistry(root).registry, imported, config, { force: true });
+    }
+    console.log('\nnext:');
+    console.log(`  - review & commit the registry:  git -C ${root} status`);
+    if (!opts.sync)
+      console.log(`  - replace the hand-written files: loadout sync ${opts.all ? '--all ' : ''}--force   (backups: *.bak)`);
+    console.log('  - in each repository, stop tracking them if they were committed: git rm --cached .mcp.json .cursor/mcp.json');
   });
 
 interface AddOpts {

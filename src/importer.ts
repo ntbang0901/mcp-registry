@@ -1,10 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ADAPTERS } from './adapters/index.js';
 import { attachServers } from './bindings-edit.js';
 import { LoadoutError } from './errors.js';
 import { SECRET_NAME, serverFileContent, serverPath, type Registry } from './registry.js';
+import { detectRepo, findGitRepos } from './repo.js';
 import type { HttpTransportDef, ParamSpec, RepoContext, ServerDef, StdioTransportDef } from './types.js';
+import type { State } from './writer.js';
 
 const EXACT_VERSION = /^[0-9]+\.[0-9]+(\.[0-9]+)?([-.+][0-9A-Za-z.+-]+)?$/;
 /** ${VAR}, ${env:VAR}, ${VAR:-default} */
@@ -169,81 +171,181 @@ export function convertEntry(rawName: string, cfg: Record<string, unknown>, root
 export const comparable = (d: ServerDef) => JSON.stringify({ transport: d.transport, params: d.params ?? {} });
 
 export interface ImportResult {
+  repo: string;
   sources: string[];
+  /** New shared servers. */
   created: string[];
+  /** Existing shared servers with the same definition. */
   reused: string[];
+  /** Shared servers no repository used yet, replaced by this repository's definition. */
+  replaced: string[];
+  /** Same name as a shared server other repositories use, but a different definition: kept as this repository's own. */
+  own: string[];
   attached: string[];
   notes: string[];
 }
 
-/** Import the MCP servers configured in a repository's client files into the registry. */
-export function importRepo(
-  registry: Registry,
-  repo: RepoContext,
-  opts: { dryRun?: boolean; repoOnly?: boolean } = {},
-): ImportResult {
-  const result: ImportResult = { sources: [], created: [], reused: [], attached: [], notes: [] };
+/**
+ * Registry view shared by every repository of one import run, so a dry run of many repositories
+ * sees the servers earlier repositories would create.
+ */
+export class ImportSession {
+  readonly shared: Map<string, ServerDef>;
+  readonly users = new Map<string, Set<string>>();
+  constructor(
+    readonly registry: Registry,
+    readonly opts: { dryRun?: boolean; state?: State } = {},
+  ) {
+    this.shared = new Map(registry.servers);
+    for (const [id, bindings] of registry.bindings) for (const b of bindings) this.use(b.server, id);
+  }
+  use(server: string, repo: string) {
+    if (!this.users.has(server)) this.users.set(server, new Set());
+    this.users.get(server)!.add(repo);
+  }
+  write(def: ServerDef, scope?: string) {
+    if (this.opts.dryRun) return;
+    const file = serverPath(this.registry, def.name, scope);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, serverFileContent(this.registry, file, def));
+  }
+}
+
+/** Client config files of a repository that loadout did not generate (hand-written or edited). */
+export function handWrittenConfigs(root: string, state?: State): string[] {
+  return Object.values(ADAPTERS)
+    .map((a) => a.path)
+    .filter((p) => {
+      const file = join(root, p);
+      return existsSync(file) && !(state && state.owns(file, readFileSync(file, 'utf8')));
+    });
+}
+
+/** Read and convert the MCP servers of a repository's hand-written client configs. */
+export function readRepoConfigs(repo: RepoContext, state?: State) {
+  const sources = handWrittenConfigs(repo.root, state);
   const found = new Map<string, ServerDef>();
-  for (const adapter of Object.values(ADAPTERS)) {
-    const file = join(repo.root, adapter.path);
-    if (!existsSync(file)) continue;
+  const notes: string[] = [];
+  for (const path of sources) {
     let json: { mcpServers?: Record<string, Record<string, unknown>> };
     try {
-      json = JSON.parse(readFileSync(file, 'utf8'));
+      json = JSON.parse(readFileSync(join(repo.root, path), 'utf8'));
     } catch (e) {
-      throw new LoadoutError(`${adapter.path}: invalid JSON (${(e as Error).message})`);
+      throw new LoadoutError(`${repo.id}: ${path} is not valid JSON (${(e as Error).message})`);
     }
-    result.sources.push(adapter.path);
     for (const [rawName, cfg] of Object.entries(json.mcpServers ?? {})) {
-      const { def, notes } = convertEntry(rawName, cfg, repo.root);
+      const { def, notes: n } = convertEntry(rawName, cfg, repo.root);
       def.description = `Imported from ${repo.id}`;
       const previous = found.get(def.name);
       if (previous) {
         if (comparable(previous) !== comparable(def))
-          result.notes.push(`${def.name}: differs between client files; using the first one`);
+          notes.push(`${def.name}: differs between client files; using ${sources[0]}`);
         continue;
       }
-      result.notes.push(...notes);
+      notes.push(...n);
       found.set(def.name, def);
     }
   }
-  if (!result.sources.length) {
+  return { sources, found, notes };
+}
+
+/** Import the MCP servers configured in a repository's hand-written client files into the registry. */
+export function importRepo(
+  registry: Registry,
+  repo: RepoContext,
+  opts: { dryRun?: boolean; repoOnly?: boolean; state?: State; session?: ImportSession } = {},
+): ImportResult {
+  const session = opts.session ?? new ImportSession(registry, { dryRun: opts.dryRun, state: opts.state });
+  const { sources, found, notes } = readRepoConfigs(repo, session.opts.state);
+  const result: ImportResult = { repo: repo.id, sources, created: [], reused: [], replaced: [], own: [], attached: [], notes };
+  if (!sources.length) {
     throw new LoadoutError(
-      `No MCP config found in ${repo.root} (looked for ${Object.values(ADAPTERS)
+      `No hand-written MCP config in ${repo.root} (looked for ${Object.values(ADAPTERS)
         .map((a) => a.path)
         .join(', ')})`,
     );
   }
-  const scope = opts.repoOnly ? repo.id : undefined;
+  const attachedNow = new Set((registry.bindings.get(repo.id) ?? []).map((b) => b.server));
+  const toAttach: string[] = [];
   for (const def of found.values()) {
-    const existing = scope ? registry.repoServers.get(scope)?.get(def.name) : registry.servers.get(def.name);
-    if (existing) {
-      result.reused.push(def.name);
-      if (comparable(existing) !== comparable(def)) {
-        result.notes.push(
-          `${def.name}: ${relative(registry.root, serverPath(registry, def.name, scope))} already exists with a different definition — kept the registry version`,
-        );
+    if (opts.repoOnly) {
+      if (attachedNow.has(def.name)) {
+        result.notes.push(`${def.name}: this repository already uses the shared "${def.name}" — skipped`);
+      } else if (registry.repoServers.get(repo.id)?.has(def.name)) {
+        result.reused.push(def.name);
+      } else {
+        result.own.push(def.name);
+        session.write(def, repo.id);
       }
       continue;
     }
-    if (scope && registry.bindings.get(scope)?.some((b) => b.server === def.name)) {
-      result.notes.push(`${def.name}: this repository already uses the shared "${def.name}" — skipped`);
+    const shared = session.shared.get(def.name);
+    const others = [...(session.users.get(def.name) ?? [])].filter((id) => id !== repo.id);
+    if (!shared) {
+      result.created.push(def.name);
+      session.shared.set(def.name, def);
+      session.write(def);
+    } else if (comparable(shared) === comparable(def)) {
+      result.reused.push(def.name);
+    } else if (attachedNow.has(def.name)) {
+      result.reused.push(def.name);
+      result.notes.push(`${def.name}: already attached here; kept the registry definition (your file differs)`);
+    } else if (!others.length) {
+      result.replaced.push(def.name);
+      const merged = { ...def, description: shared.description ?? def.description };
+      session.shared.set(def.name, merged);
+      session.write(merged);
+    } else {
+      result.own.push(def.name);
+      result.notes.push(
+        `${def.name}: differs from the shared definition used by ${others.join(', ')} — kept as this repository's own server`,
+      );
+      if (registry.repoServers.get(repo.id)?.has(def.name)) continue;
+      session.write(def, repo.id);
       continue;
     }
-    result.created.push(def.name);
-    if (!opts.dryRun) {
-      const file = serverPath(registry, def.name, scope);
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, serverFileContent(registry, file, def));
+    toAttach.push(def.name);
+    session.use(def.name, repo.id);
+  }
+  if (opts.repoOnly) return result;
+  if (opts.dryRun || session.opts.dryRun) result.attached = toAttach.filter((n) => !attachedNow.has(n));
+  else result.attached = attachServers(registry.bindingsPath, repo.id, toAttach);
+  return result;
+}
+
+export interface ImportCandidate {
+  repo: RepoContext;
+  files: string[];
+  servers: string[];
+  registered: boolean;
+}
+
+/** Repositories under the workspaces with hand-written MCP client configs. */
+export function findImportCandidates(registry: Registry, workspaces: string[], state?: State): ImportCandidate[] {
+  const repos: RepoContext[] = [];
+  for (const dir of findGitRepos(workspaces)) {
+    try {
+      repos.push(detectRepo(dir));
+    } catch {
+      /* no remote */
     }
   }
-  if (scope) return result; // repository-only servers need no binding
-  const names = [...found.keys()];
-  if (opts.dryRun) {
-    const current = new Set((registry.bindings.get(repo.id) ?? []).map((b) => b.server));
-    result.attached = names.filter((n) => !current.has(n));
-  } else {
-    result.attached = attachServers(registry.bindingsPath, repo.id, names);
+  return importCandidates(registry, repos, state);
+}
+
+/** Which of these repositories have hand-written MCP client configs. */
+export function importCandidates(registry: Registry, repos: RepoContext[], state?: State): ImportCandidate[] {
+  const out: ImportCandidate[] = [];
+  for (const repo of repos) {
+    const files = handWrittenConfigs(repo.root, state);
+    if (!files.length) continue;
+    let servers: string[] = [];
+    try {
+      servers = [...readRepoConfigs(repo, state).found.keys()];
+    } catch {
+      servers = []; // invalid JSON: reported when importing
+    }
+    out.push({ repo, files, servers, registered: registry.bindings.has(repo.id) || registry.repoServers.has(repo.id) });
   }
-  return result;
+  return out;
 }

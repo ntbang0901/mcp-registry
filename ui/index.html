@@ -518,7 +518,7 @@ function attentionItems() {
       if (m.length) items.push({ level: 'bad', text: `${repo.id} needs values for ${s}: ${m.join(', ')}`, href: repoHref(repo.id) });
     }
     for (const c of repo.clones) {
-      if (c.status === 'hand-written') items.push({ level: 'bad', text: `${repo.id} has hand-written MCP config files`, href: repoHref(repo.id) });
+      if (c.status === 'hand-written') items.push({ level: 'bad', text: `${repo.id} has hand-written MCP config files`, href: repoHref(repo.id), action: ['Import', () => importRepos([repo.id])] });
       else if (c.status === 'out of sync') items.push({ level: 'warn', text: `${repo.id} is out of sync`, href: repoHref(repo.id), action: ['Sync', () => sync(repo.id)] });
       else if (c.status === 'error' && !hasErrors()) items.push({ level: 'bad', text: `${repo.id}: ${c.error}`, href: repoHref(repo.id) });
     }
@@ -528,6 +528,8 @@ function attentionItems() {
 
 function overviewPage() {
   const items = attentionItems();
+  const importable = state.importable.filter((r) => !r.registered); // registered ones show up under Needs attention
+  const plainFound = state.unregistered.filter((r) => !state.importable.some((i) => i.id === r.id));
   const servers = state.servers.map((s) => s.name);
   const missingEnv = [...new Set(state.repos.flatMap((r) => r.env.filter((e) => !e.set).map((e) => e.name)))];
   return el('div', { class: 'page' },
@@ -550,6 +552,20 @@ function overviewPage() {
         : el('div', { class: 'row' }, el('span', { class: 'dot ok' }), el('span', { class: 'text' }, 'Everything is in sync.')))),
 
     missingEnv.length ? el('div', { class: 'msg warn' }, 'Not set in the shell running loadout ui: ', missingEnv.join(', ')) : null,
+
+    importable.length ? el('div', { class: 'section' },
+      el('div', { class: 'section-head' },
+        el('h2', {}, 'MCP configs to import'),
+        el('span', { class: 'hint' }, 'Hand-written .mcp.json / .cursor/mcp.json in your workspaces'),
+        el('div', { class: 'push' }, el('button', { class: 'btn primary', type: 'button', onclick: () => importRepos(importable.map((r) => r.id)) },
+          importable.length > 1 ? `Import all (${importable.length})` : 'Import'))),
+      el('div', { class: 'panel list' }, importable.map((r) => el('div', { class: 'file' },
+        el('span', { class: 'name' }, r.id, el('span', { class: 'hint mono', style: 'display:block' }, r.files.join(' · '))),
+        el('span', { class: 'actions' }, r.servers.length ? r.servers.map((n) => el('span', { class: 'tag' }, n)) : el('span', { class: 'hint' }, 'no servers')),
+        r.registered ? el('span', { class: 'pill' }, 'registered') : null,
+        el('button', { class: 'btn sm', type: 'button', onclick: () => importRepos([r.id]) }, 'Import')))),
+      el('div', { class: 'hint' }, 'Importing adds the servers to the registry (API keys become environment variables) and replaces the files with generated ones; a .bak copy of each is kept.')) : null,
+
 
     el('div', { class: 'section' },
       el('div', { class: 'section-head' }, el('h2', {}, 'Repositories and shared servers'), el('span', { class: 'hint push' }, 'Click a row to manage it')),
@@ -574,9 +590,9 @@ function overviewPage() {
               el('button', { class: 'btn primary', type: 'button', onclick: () => openDrawer() }, 'New server'),
               el('button', { class: 'btn', type: 'button', onclick: showAddRepo }, 'Add a repository')))),
 
-    state.unregistered.length ? el('div', { class: 'section' },
+    plainFound.length ? el('div', { class: 'section' },
       el('div', { class: 'section-head' }, el('h2', {}, 'Found on this machine'), el('span', { class: 'hint push' }, 'Git repositories in your workspaces that the registry does not manage yet')),
-      el('div', { class: 'panel list' }, state.unregistered.map((r) => el('div', { class: 'file' },
+      el('div', { class: 'panel list' }, plainFound.map((r) => el('div', { class: 'file' },
         el('span', { class: 'name' }, r.id),
         el('button', { class: 'btn sm', type: 'button', title: r.path, onclick: () => addRepo(r.id) }, 'Add'))))) : null,
   );
@@ -605,7 +621,8 @@ function repoPage(repo) {
           el('span', { class: `pill ${health === 'none' ? '' : health}` }, el('span', { class: `dot ${health}` }), label),
           repo.clones.map((c) => el('span', { class: 'path' }, c.path)))),
       el('div', { class: 'actions' },
-        handWritten ? el('button', { class: 'btn', type: 'button', title: 'Overwrite the hand-written files; a .bak copy is kept', onclick: () => sync(repo.id, true) }, 'Replace hand-written files') : null,
+        handWritten ? el('button', { class: 'btn primary', type: 'button', title: 'Add the servers in these files to the registry, then replace the files; a .bak copy is kept', onclick: () => importRepos([repo.id]) }, 'Import hand-written files') : null,
+        handWritten ? el('button', { class: 'btn', type: 'button', title: 'Overwrite the hand-written files without importing them; a .bak copy is kept', onclick: () => sync(repo.id, true) }, 'Replace them') : null,
         repo.clones.length ? el('button', { class: 'btn', type: 'button', onclick: () => sync(repo.id) }, 'Sync') : null)),
 
     el('div', { class: 'section' },
@@ -878,6 +895,26 @@ async function sync(repoId, force = false, quiet = false) {
     else if (conflicts.length) toast(`${conflicts[0].id} has hand-written config files. Use "Replace hand-written files".`, true);
     else if (!quiet) toast(r.results.length ? `Synced ${r.results.length} ${r.results.length === 1 ? 'clone' : 'clones'}` : 'No registered repositories are cloned in your workspaces');
     await refresh();
+  });
+}
+
+async function importRepos(ids) {
+  await guard(async () => {
+    const r = await api('POST', '/api/import', { repos: ids, sync: true });
+    const ok = r.results.filter((x) => !x.error);
+    const count = (k) => ok.reduce((n, x) => n + x[k].length, 0);
+    const parts = [
+      count('created') && `${count('created')} new`,
+      count('reused') && `${count('reused')} reused`,
+      count('replaced') && `${count('replaced')} updated`,
+      count('own') && `${count('own')} kept as repository-only`,
+    ].filter(Boolean);
+    const failed = r.results.filter((x) => x.error);
+    toast(failed.length
+      ? `${failed[0].repo}: ${failed[0].error}`
+      : `Imported ${ok.length} ${ok.length === 1 ? 'repository' : 'repositories'}${parts.length ? `: ${parts.join(', ')} servers` : ''}`, failed.length > 0);
+    await refresh();
+    if (ok.length === 1) location.hash = repoHref(ok[0].repo);
   });
 }
 

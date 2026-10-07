@@ -12,6 +12,7 @@ import { BINDINGS_FILE, formatProblems, knownRepos, loadRegistry, loadValidRegis
 import { detectRepo, findGitRepos, normalizeRepoId, repoContext } from './repo.js';
 import { repoStatus, syncRepo, type SyncResult } from './sync.js';
 import type { RepoContext } from './types.js';
+import { updateBindingParams } from './params.js';
 import { startUi } from './ui-server.js';
 import { State } from './writer.js';
 
@@ -214,6 +215,45 @@ program
     console.log(removed.length ? `detached from ${repo.id}: ${removed.join(', ')}` : `${repo.id} has none of: ${servers.join(', ')}`);
     if (isCwd && opts.sync) runSync(loadValidRegistry(root).registry, [repo], config, {});
     if (removed.length) console.log(`\nremember to commit the registry: git -C ${root} commit -am "detach ${removed.join(', ')} from ${repo.slug}"`);
+  });
+
+program
+  .command('set')
+  .description("Set a repository's param values for a shared server (no values: show them)")
+  .argument('<server>', 'shared server name')
+  .argument('[assignments...]', 'key=value pairs (secrets: key=env://VAR_NAME)')
+  .option('--unset <keys...>', 'params to remove (fall back to the default)')
+  .option('--repo <id>', 'repository id or git URL (default: current repository)')
+  .option('--attach', 'attach the server first if needed')
+  .option('--no-sync', 'do not re-render configs of the current repository')
+  .addHelpText('after', '\nExample:\n  loadout set postgres database=promotion_db password=env://PROMO_DB_PASSWORD')
+  .action((server: string, assignments: string[], opts: { unset?: string[]; repo?: string; attach?: boolean; sync: boolean }, cmd: Command) => {
+    const { config, root } = context(cmd);
+    const { registry } = loadValidRegistry(root);
+    const { repo, isCwd } = targetRepo(opts.repo);
+    const def = registry.servers.get(server);
+    if (!assignments.length && !opts.unset?.length) {
+      if (!def) throw new LoadoutError(`Unknown shared server "${server}"`);
+      const values = registry.bindings.get(repo.id)?.find((b) => b.server === server)?.params ?? {};
+      const specs = Object.entries(def.params ?? {});
+      if (!specs.length) return console.log(`${server} has no params`);
+      console.log(`${server} @ ${repo.id}`);
+      for (const [name, spec] of specs) {
+        const value = values[name] !== undefined ? String(values[name]) : spec.default !== undefined ? `(default: ${spec.default})` : spec.required ? '(REQUIRED, not set)' : '(not set)';
+        console.log(`  ${name.padEnd(16)} ${spec.type.padEnd(8)} ${value}${spec.description ? `   # ${spec.description}` : ''}`);
+      }
+      return;
+    }
+    const values: Record<string, unknown> = {};
+    for (const a of assignments) {
+      const i = a.indexOf('=');
+      if (i <= 0) throw new LoadoutError(`Expected key=value, got "${a.slice(0, 20)}"`);
+      values[a.slice(0, i)] = a.slice(i + 1);
+    }
+    for (const k of opts.unset ?? []) values[k] = '';
+    const params = updateBindingParams(registry, repo.id, server, values, { attach: opts.attach });
+    console.log(`${server} @ ${repo.id}: ${Object.entries(params).map(([k, v]) => `${k}=${v}`).join(' ') || '(defaults)'}`);
+    if (isCwd && opts.sync) runSync(loadValidRegistry(root).registry, [repo], config, {});
   });
 
 program

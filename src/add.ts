@@ -3,9 +3,11 @@ import { dirname, join, relative, sep } from 'node:path';
 import { LoadoutError } from './errors.js';
 import { attachServers, detachServers } from './bindings-edit.js';
 import { convertEntry, normalizeServerName } from './importer.js';
-import { checkServer, schemaHeader, serverFileContent, serverPath, type Problem, type Registry } from './registry.js';
+import YAML from 'yaml';
+import { checkServer, loadRegistry, schemaHeader, serverFileContent, serverPath, type Problem, type Registry } from './registry.js';
 
 export { serverPath } from './registry.js';
+import { templateRefs } from './template.js';
 import type { ServerDef } from './types.js';
 
 export interface AddEntry {
@@ -45,7 +47,7 @@ export function parseServerJson(text: string): AddEntry[] {
   throw new LoadoutError('No MCP server found: expected "mcpServers", or an object with "command" or "url"');
 }
 
-/** Split a command line, honoring single/double quotes and backslash escapes. */
+/** Split a command line, honoring single/double quotes, backslash escapes and `{{ ... }}` placeholders. */
 export function splitCommandLine(line: string): string[] {
   const out: string[] = [];
   let cur = '';
@@ -53,6 +55,12 @@ export function splitCommandLine(line: string): string[] {
   let has = false;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
+    if (c === '{' && line[i + 1] === '{' && line.indexOf('}}', i) !== -1) {
+      const end = line.indexOf('}}', i) + 2;
+      cur += line.slice(i, end);
+      i = end - 1;
+      continue;
+    }
     if (quote) {
       if (c === quote) quote = null;
       else if (c === '\\' && quote === '"' && i + 1 < line.length) cur += line[++i];
@@ -111,6 +119,33 @@ export function entryFromForm(form: FormInput): AddEntry {
   return { name: form.name, cfg: { command, args, ...(Object.keys(pairs).length ? { env: pairs } : {}) } };
 }
 
+/** Every template string of a server's transport. */
+function transportTemplates(def: ServerDef): string[] {
+  const t = def.transport;
+  return t.type === 'http'
+    ? [t.url, ...Object.values(t.headers ?? {})]
+    : [t.command ?? '', ...(t.args ?? []), ...Object.values(t.env ?? {})];
+}
+
+/** Declare `{{ params.x }}` placeholders the user typed as required string params. */
+function declarePlaceholders(def: ServerDef): string[] {
+  const declared: string[] = [];
+  for (const tpl of transportTemplates(def)) {
+    let refs;
+    try {
+      refs = templateRefs(tpl);
+    } catch {
+      continue; // reported by checkServer
+    }
+    for (const r of refs) {
+      if (r.scope !== 'params' || def.params?.[r.name]) continue;
+      def.params = { ...(def.params ?? {}), [r.name]: { type: 'string', required: true } };
+      declared.push(r.name);
+    }
+  }
+  return declared;
+}
+
 export interface PreviewServer {
   name: string;
   /** Path relative to the registry root. */
@@ -142,6 +177,7 @@ export function previewAdd(
     const rawName = opts.name || entry.name;
     if (!rawName) throw new LoadoutError('This config has no server name: give it a name');
     const { def, notes: n } = convertEntry(rawName, entry.cfg, opts.root);
+    const placeholders = declarePlaceholders(def);
     if (opts.description) def.description = opts.description;
     else if (typeof entry.cfg.description === 'string') def.description = entry.cfg.description;
     notes.push(...n);
@@ -151,6 +187,15 @@ export function previewAdd(
     const file = serverPath(registry, def.name, opts.repo);
     const path = relative(registry.root, file).split(sep).join('/');
     const problems = checkServer(ordered, path, def.name);
+    if (placeholders.length && opts.repo) {
+      problems.push({
+        level: 'error',
+        file: path,
+        message: `{{ params.${placeholders[0]} }}: a repository-only server has no per-repository values — write the value directly`,
+      });
+    } else if (placeholders.length) {
+      notes.push(`${def.name}: ${placeholders.join(', ')} — set per repository (required)`);
+    }
     if (opts.repo && registry.bindings.get(opts.repo)?.some((b) => b.server === def.name)) {
       problems.push({ level: 'error', file: path, message: `${opts.repo} already uses the shared server "${def.name}"; pick another name` });
     }
@@ -252,4 +297,40 @@ export function removeServer(registry: Registry, rawName: string, repo?: string)
   const file = serverPath(registry, name);
   if (!existsSync(file)) throw new LoadoutError(`No shared server named "${name}"`);
   rmSync(file);
+}
+
+export function readServerSource(registry: Registry, rawName: string, repo?: string): { path: string; yaml: string } {
+  const file = serverPath(registry, normalizeServerName(rawName), repo);
+  if (!existsSync(file)) throw new LoadoutError(`No such server: ${relative(registry.root, file)}`);
+  return { path: relative(registry.root, file).split(sep).join('/'), yaml: readFileSync(file, 'utf8') };
+}
+
+/**
+ * Replace a server definition with edited YAML. The registry is re-validated with the new file in place;
+ * if that introduces errors (bad schema, a repository now missing a required param, …) the old file is restored.
+ */
+export function writeServerSource(registry: Registry, rawName: string, yaml: string, repo?: string): Problem[] {
+  const name = normalizeServerName(rawName);
+  const file = serverPath(registry, name, repo);
+  if (!existsSync(file)) throw new LoadoutError(`No such server: ${relative(registry.root, file)}`);
+  let data: unknown;
+  try {
+    data = YAML.parse(yaml);
+  } catch (e) {
+    throw new LoadoutError(`Invalid YAML: ${(e as Error).message}`);
+  }
+  const path = relative(registry.root, file).split(sep).join('/');
+  const own = checkServer(data, path, name).filter((p) => p.level === 'error');
+  if (own.length) throw new LoadoutError(own.map((p) => p.message).join('\n'));
+  const key = (p: Problem) => `${p.file}\0${p.message}`;
+  const before = new Set(loadRegistry(registry.root).problems.filter((p) => p.level === 'error').map(key));
+  const previous = readFileSync(file, 'utf8');
+  writeFileSync(file, yaml.endsWith('\n') ? yaml : `${yaml}\n`);
+  const after = loadRegistry(registry.root).problems;
+  const introduced = after.filter((p) => p.level === 'error' && !before.has(key(p)));
+  if (introduced.length) {
+    writeFileSync(file, previous);
+    throw new LoadoutError(introduced.map((p) => `${p.file}: ${p.message}`).join('\n'));
+  }
+  return after.filter((p) => p.level === 'warning' && p.file === path);
 }

@@ -27,6 +27,7 @@ describe('form helpers', () => {
   it('splits command lines with quotes', () => {
     expect(splitCommandLine(`npx -y "@a/b@1.0.0" --name 'my repo' a\\ b ""`)).toEqual(['npx', '-y', '@a/b@1.0.0', '--name', 'my repo', 'a b', '']);
     expect(() => splitCommandLine('npx "oops')).toThrow(/Unterminated/);
+    expect(splitCommandLine('pg --db {{ params.database }} --url=x/{{ repo.name }}/y')).toEqual(['pg', '--db', '{{ params.database }}', '--url=x/{{ repo.name }}/y']);
   });
 
   it('parses KEY=value and Header: value pairs', () => {

@@ -3,7 +3,21 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { commitAdd, entryFromForm, makeRepoOnly, parseServerJson, previewAdd, removeServer, shareServer, usersOf, type AddEntry, type FormInput } from './add.js';
+import {
+  commitAdd,
+  entryFromForm,
+  makeRepoOnly,
+  parseServerJson,
+  previewAdd,
+  readServerSource,
+  removeServer,
+  shareServer,
+  usersOf,
+  writeServerSource,
+  type AddEntry,
+  type FormInput,
+} from './add.js';
+import { updateBindingParams } from './params.js';
 import { attachServers, detachServers } from './bindings-edit.js';
 import { stateDir, type Config } from './config.js';
 import { LoadoutError } from './errors.js';
@@ -79,6 +93,7 @@ function buildState(opts: UiOptions): Json {
       summary,
       envVars: Object.values(def.params ?? {}).flatMap((p) => (p.type === 'secret' && typeof p.default === 'string' ? [p.default.replace(/^env:\/\//, '')] : [])),
       usedBy: repo ? [repo] : usersOf(registry, def.name),
+      params: Object.entries(def.params ?? {}).map(([name, spec]) => ({ name, ...spec })),
     };
   };
   const servers = [...registry.servers.values()].map((def) => describe(def));
@@ -87,6 +102,7 @@ function buildState(opts: UiOptions): Json {
     id,
     servers: (registry.bindings.get(id) ?? []).map((b) => b.server),
     own: [...(registry.repoServers.get(id)?.keys() ?? [])],
+    params: Object.fromEntries((registry.bindings.get(id) ?? []).map((b) => [b.server, b.params])),
     clones: (clones.get(id) ?? []).map((c) => ({ path: c.root, status: valid ? summarizeStatus(registry, c, opts.config, state) : 'registry has errors' })),
   }));
   const known = new Set(knownRepos(registry));
@@ -181,6 +197,16 @@ async function handleApi(req: IncomingMessage, url: URL, body: Json, opts: UiOpt
     case 'POST /api/unshare': {
       return { repo: makeRepoOnly(registry(), String(body.name ?? ''), body.repo ? normalizeRepoId(String(body.repo)) : undefined) };
     }
+    case 'POST /api/params': {
+      const params = updateBindingParams(
+        registry(),
+        normalizeRepoId(String(body.repo ?? '')),
+        String(body.server ?? ''),
+        (body.params ?? {}) as Record<string, unknown>,
+        { replace: true, attach: body.attach === true },
+      );
+      return { params };
+    }
     case 'POST /api/sync':
       return syncClones(opts, body);
     case 'POST /api/commit': {
@@ -192,6 +218,13 @@ async function handleApi(req: IncomingMessage, url: URL, body: Json, opts: UiOpt
       git(opts.registryRoot, ['add', '-A', '--', ...paths]);
       return { output: git(opts.registryRoot, ['commit', '-m', message, '--', ...paths])?.trim() };
     }
+  }
+  const source = /^\/api\/servers\/([^/]+)\/source$/.exec(url.pathname);
+  if (source) {
+    const name = decodeURIComponent(source[1]);
+    const repo = url.searchParams.get('repo') ? normalizeRepoId(url.searchParams.get('repo')!) : undefined;
+    if (req.method === 'GET') return readServerSource(registry(), name, repo);
+    if (req.method === 'PUT') return { warnings: writeServerSource(registry(), name, String(body.yaml ?? ''), repo) };
   }
   if (req.method === 'DELETE' && url.pathname.startsWith('/api/servers/')) {
     const repo = url.searchParams.get('repo');

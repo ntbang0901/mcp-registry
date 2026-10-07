@@ -41,7 +41,7 @@ describe('ui server', () => {
     expect(readFileSync(join(root, 'bindings.yaml'), 'utf8')).toContain('github.com/acme/app: [ctx]');
 
     const state = await (await call('/api/state')).json();
-    expect(state.repos).toEqual([{ id: 'github.com/acme/app', servers: ['ctx'], own: [], clones: [] }]);
+    expect(state.repos).toEqual([{ id: 'github.com/acme/app', servers: ['ctx'], own: [], params: { ctx: {} }, clones: [] }]);
 
     const dup = await call('/api/servers', { method: 'POST', body: JSON.stringify({ mode: 'form', form: { name: 'ctx', kind: 'remote', url: 'https://x' } }) });
     expect(dup.status).toBe(400);
@@ -50,6 +50,26 @@ describe('ui server', () => {
     const detach = await call('/api/bindings', { method: 'POST', body: JSON.stringify({ repo: 'github.com/acme/app', server: 'ctx', attached: false }) });
     expect(detach.status).toBe(200);
     expect((await call('/api/servers/ctx', { method: 'DELETE' })).status).toBe(200);
+  });
+
+  it('sets per-repository params and edits server definitions', async () => {
+    write(root, 'servers/pg.yaml', 'name: pg\ntransport: { type: http, url: "https://pg/{{ params.db }}" }\nparams:\n  db: { type: string, required: true }\n');
+    const post = (path: string, body: unknown) => call(path, { method: 'POST', body: JSON.stringify(body) });
+    const missing = await post('/api/params', { repo: 'github.com/acme/app', server: 'pg', params: {}, attach: true });
+    expect(missing.status).toBe(400);
+    expect((await missing.json()).error).toMatch(/requires param "db"/);
+    const ok = await post('/api/params', { repo: 'github.com/acme/app', server: 'pg', params: { db: 'promo' }, attach: true });
+    expect(await ok.json()).toEqual({ params: { db: 'promo' } });
+    const state = await (await call('/api/state')).json();
+    expect(state.repos[0].params.pg).toEqual({ db: 'promo' });
+    expect(state.servers.find((s: { name: string }) => s.name === 'pg').params).toEqual([{ name: 'db', type: 'string', required: true }]);
+
+    const src = await (await call('/api/servers/pg/source')).json();
+    expect(src.path).toBe('servers/pg.yaml');
+    const broken = await call('/api/servers/pg/source', { method: 'PUT', body: JSON.stringify({ yaml: src.yaml.replace('params:\n  db: { type: string, required: true }\n', '') }) });
+    expect(broken.status).toBe(400);
+    expect((await broken.json()).error).toMatch(/undeclared param "db"/);
+    await post('/api/bindings', { repo: 'github.com/acme/app', server: 'pg', attached: false });
   });
 
   it('adds, shares and deletes repository-only servers', async () => {

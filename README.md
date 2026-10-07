@@ -67,6 +67,31 @@ loadout remove db                                      # xoá server riêng củ
 
 Trên UI: chọn **Only for &lt;repo&gt;** khi thêm server; danh sách server có nút **Make shared** / **Make repo-only**; bảng repo có cột **Repo-only**.
 
+## Tham số riêng cho từng repo
+
+Cùng một server nhưng mỗi repo một giá trị (database, Jira project, tenant…): viết `{{ params.<tên> }}` ở chỗ giá trị thay đổi khi thêm server — tool tự khai báo tham số đó (bắt buộc; ở vị trí secret như `PGPASSWORD` thì là tham số `secret`).
+
+```text
+Command:  npx -y @acme/pg-mcp@1.0.0 --database {{ params.database }}
+Env:      PGPASSWORD={{ params.password }}
+```
+
+Rồi nhập giá trị cho từng repo:
+
+- **UI**: tick server trong bảng → form tham số tự mở nếu có tham số bắt buộc; nút **⚙** cạnh ô đã tick để sửa sau (**⚙ !** đỏ = còn thiếu tham số bắt buộc, **⚙ 2** = đã đặt 2 giá trị). Ô trống = dùng giá trị mặc định.
+- **CLI**:
+
+  ```bash
+  loadout set postgres database=promotion_db password=env://PROMO_DB_PASSWORD   # repo hiện tại
+  loadout set postgres --repo github.com/ntbang0901/seller-center database=seller_db
+  loadout set postgres                       # xem giá trị hiện tại
+  loadout set postgres --unset database      # bỏ, dùng mặc định
+  ```
+
+Tham số `secret` chỉ nhận tham chiếu `env://TÊN_BIẾN` — mỗi repo có thể trỏ tới biến khác nhau, giá trị thật vẫn nằm trong shell. Giá trị được kiểm tra trước khi ghi (sai kiểu, thiếu tham số bắt buộc, dán key thật → báo lỗi, không ghi gì).
+
+Muốn thêm tham số cho server đã có: nút **Edit** trên UI mở file YAML của server; khi lưu, toàn bộ registry được kiểm tra lại và thay đổi bị từ chối nếu làm hỏng một repo (ví dụ thêm tham số bắt buộc mà repo đang dùng chưa đặt giá trị).
+
 ## Thêm server bằng CLI
 
 ```bash

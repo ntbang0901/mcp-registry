@@ -1,11 +1,12 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import YAML, { isMap, isScalar, isSeq, YAMLMap, YAMLSeq, type Document } from 'yaml';
 import { LoadoutError } from './errors.js';
+import type { ParamValue } from './types.js';
 import { normalizeRepoId } from './repo.js';
 
 export const BINDINGS_HEADER = '# yaml-language-server: $schema=./schemas/bindings.schema.json\n';
 
-const STRINGIFY = { flowCollectionPadding: false } as const;
+const STRINGIFY = { flowCollectionPadding: false, nullStr: '' } as const;
 
 function loadDoc(path: string): Document {
   const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
@@ -84,4 +85,44 @@ export function detachServers(path: string, id: string, servers: string[]): stri
   }
   if (removed.length) writeFileSync(path, doc.toString(STRINGIFY));
   return removed;
+}
+
+/**
+ * Set the params of one server binding (replacing previous values). The repository entry switches to the
+ * map form while any server has params, and back to the compact list form when none has.
+ */
+export function setBindingParams(path: string, id: string, server: string, params: Record<string, ParamValue>): void {
+  const doc = loadDoc(path);
+  const repos = doc.get('repositories') as YAMLMap;
+  const pair = findRepoPair(repos, id);
+  if (!pair) throw new LoadoutError(`${id} is not in bindings.yaml`);
+  const current = new Map<string, Record<string, ParamValue>>();
+  if (isMap(pair.value)) {
+    for (const item of pair.value.items) {
+      const name = String(isScalar(item.key) ? item.key.value : item.key);
+      const value = (item.value as { toJSON?: () => unknown } | null)?.toJSON?.() as { params?: Record<string, ParamValue> } | null;
+      current.set(name, value?.params ?? {});
+    }
+  } else {
+    for (const name of serverNames(pair.value)) current.set(name, {});
+  }
+  if (!current.has(server)) throw new LoadoutError(`${server} is not attached to ${id}`);
+  current.set(server, params);
+  // Keep an end-of-line comment ("repo: [a, b] # note"): on the key in map form, on the list otherwise.
+  const key = pair.key as { comment?: string };
+  const comment = (pair.value as { comment?: string } | null)?.comment ?? key.comment;
+  key.comment = undefined;
+  let next: YAMLMap | YAMLSeq;
+  if ([...current.values()].every((p) => Object.keys(p).length === 0)) {
+    next = new YAMLSeq();
+    next.flow = true;
+    for (const name of current.keys()) next.add(name);
+  } else {
+    next = new YAMLMap();
+    for (const [name, p] of current) next.set(name, Object.keys(p).length ? doc.createNode({ params: p }) : null);
+  }
+  if (comment && isMap(next)) key.comment = comment;
+  else if (comment) next.comment = comment;
+  pair.value = next;
+  writeFileSync(path, doc.toString(STRINGIFY));
 }

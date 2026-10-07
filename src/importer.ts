@@ -32,6 +32,12 @@ interface ConvertContext {
 
 /** Replace a secret value with a secret param; the literal value is never kept. */
 function secretParam(ctx: ConvertContext, value: string, suggested: string, where: string, exact = false): string {
+  // Already a placeholder the user typed: keep it, as a per-repository secret param.
+  const placeholder = /^\{\{\s*params\.([A-Za-z_]\w*)\s*\}\}$/.exec(value.trim());
+  if (placeholder) {
+    ctx.params[placeholder[1]] = { type: 'secret', required: true };
+    return value.trim();
+  }
   const ref = ENV_REF.exec(value.trim());
   const prefix = envName(ctx.server);
   let name = ref ? ref[1] : exact ? suggested : envName(suggested);

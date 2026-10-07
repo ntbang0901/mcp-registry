@@ -984,7 +984,7 @@ Không commit gì liên quan MCP. `loadout sync` (chạy trong repo) nhận di�
 | D1 | Nguồn sự thật mapping | `bindings.yaml` trung tâm |
 | D2 | File sinh ra | Không commit; ignore qua `.git/info/exclude` |
 
-Lệnh có trong v0.1: `init`, `add [--repo-only]`, `remove`, `share`, `unshare`, `ui`, `sync [--all] [--force] [--dry-run]`, `status [--all]`, `attach`, `detach`, `matrix`, `import`, `validate`.
+Lệnh có trong v0.1: `init`, `add [--repo-only]`, `remove`, `share`, `unshare`, `set`, `ui`, `sync [--all] [--force] [--dry-run]`, `status [--all]`, `attach`, `detach`, `matrix`, `import`, `validate`.
 
 **Thêm server không cần viết YAML:** `loadout add` (JSON dán từ README / `--url` / `-- <command>`) và `loadout ui` (web UI local: form + dán JSON có preview, ma trận repo × server, sync, commit). UI là server HTTP chỉ bind `127.0.0.1`, mọi request cần token ngẫu nhiên theo phiên và Host header phải là local (chống CSRF / DNS rebinding). Git vẫn là nguồn sự thật — UI chỉ sửa file trong registry.
 
@@ -1003,3 +1003,13 @@ Quyết định:
 - **Không được trùng tên** với server dùng chung mà repo đó đang gắn (`validate` báo lỗi).
 - **Chuyển phạm vi là thao tác hạng nhất:** `share` (riêng → chung, giữ binding) và `unshare` (chung nhưng chỉ ≤ 1 repo dùng → riêng). Nhờ vậy không phải đoán trước: bắt đầu riêng, khi repo thứ hai cần thì share.
 - Phương án đã loại: để server riêng trong chính repo (file local) — tiện cho thay đổi theo branch nhưng tạo nguồn sự thật thứ hai cho danh sách server, đúng điều §21 đã chọn tránh.
+
+---
+
+## 24. Tham số theo repo trên UI
+
+- **Khai báo bằng placeholder:** khi thêm server, `{{ params.x }}` chưa khai báo được tự khai báo là tham số `string` bắt buộc (ở vị trí secret — env/header/flag có tên dạng key/token/password — là `secret`). Không cần biết schema `params:` để bắt đầu.
+- **Giá trị nằm trong `bindings.yaml`** (dạng map, `params:` dưới server). Repo nào không có tham số giữ dạng list gọn `[a, b]`; tool tự chuyển qua lại và giữ comment cuối dòng.
+- **Kiểm tra trước khi ghi:** ép kiểu theo khai báo, chạy resolve như lúc sync; lỗi → không ghi. Tick một server có tham số bắt buộc mở form trước, chỉ gắn khi lưu thành công — registry không bao giờ ở trạng thái thiếu tham số (vốn chặn sync của mọi repo).
+- **Sửa định nghĩa server trên UI:** ghi file, validate lại toàn registry, khôi phục file cũ nếu xuất hiện lỗi mới.
+- Server riêng của repo không có tham số theo repo (không có binding): giá trị viết thẳng vào định nghĩa; placeholder bị báo lỗi khi thêm.

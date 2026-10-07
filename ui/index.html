@@ -67,6 +67,19 @@
   .scope label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
   .scope select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: 12.5px var(--mono); max-width: 100%; }
   .own-chip { display: inline-block; font-family: var(--mono); font-size: 11.5px; padding: 1px 7px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--border); margin: 2px 4px 2px 0; }
+  .cell { display: inline-flex; align-items: center; gap: 6px; }
+  .gear { border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); border-radius: 6px; font: 600 11px/18px system-ui, sans-serif; padding: 0 6px; cursor: pointer; white-space: nowrap; }
+  .gear.set { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+  .gear.missing { color: var(--err); border-color: var(--err); background: var(--err-bg); }
+  dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); padding: 0; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+  dialog::backdrop { background: rgba(0, 0, 0, .45); }
+  .dlg { padding: 18px 20px; }
+  .dlg h3 { margin: 0 0 14px; font-size: 15px; overflow-wrap: anywhere; }
+  .dlg label { margin-bottom: 14px; }
+  .dlg label > span:first-child { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .dlg select { padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
+  textarea.source { min-height: 340px; }
+  code { font-family: var(--mono); font-size: 12.5px; }
   .group-head { margin: 18px 0 2px; font-size: 13px; color: var(--muted); font-weight: 600; }
   .group-head .repo { font-family: var(--mono); }
   .attach { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
@@ -147,6 +160,7 @@
           </div>
           <label id="f-url-l">URL <input id="f-url" placeholder="https://mcp.example.com/mcp"></label>
           <label id="f-cmd-l" hidden>Command <input id="f-cmd" spellcheck="false" placeholder="npx -y @scope/server@1.2.3 --some-flag"></label>
+          <p class="hint">Values that differ per repository: write <code>{{ params.name }}</code> (e.g. <code>--database {{ params.database }}</code>), then fill them in per repository with ⚙.</p>
           <label><span><span id="f-pairs-label">Headers</span> <span class="hint">KEY=value, one per line</span></span>
             <textarea id="f-pairs" rows="3" spellcheck="false" placeholder="Authorization=Bearer YOUR_KEY"></textarea>
           </label>
@@ -190,6 +204,7 @@
     <div id="sync-results"></div>
   </section>
 </main>
+<dialog id="dlg"></dialog>
 <div id="toast"></div>
 
 <script>
@@ -297,10 +312,13 @@ function renderMatrix() {
       const cloned = repo.clones.length > 0;
       return el('tr', {},
         el('td', { class: 'repo' }, repo.id, repo.clones.map((c) => el('span', { class: 'clone' }, c.path))),
-        servers.map((s) => el('td', {}, el('input', {
-          type: 'checkbox', checked: repo.servers.includes(s), 'aria-label': `${s} for ${repo.id}`,
-          onchange: (e) => toggle(repo, s, e.target.checked, e.target),
-        }))),
+        servers.map((s) => el('td', {}, el('span', { class: 'cell' },
+          el('input', {
+            type: 'checkbox', checked: repo.servers.includes(s), 'aria-label': `${s} for ${repo.id}`,
+            onchange: (e) => toggle(repo, s, e.target.checked, e.target),
+          }),
+          repo.servers.includes(s) ? gearButton(repo, s) : null,
+        ))),
         el('td', {}, repo.own.length ? repo.own.map((n) => el('span', { class: 'own-chip' }, n)) : el('span', { class: 'hint' }, '—')),
         el('td', {}, cloned ? repo.clones.map((c) => statusPill(c.status)) : el('span', { class: 'pill', title: 'Not found under your workspaces' }, 'not cloned')),
         el('td', {}, cloned ? el('button', { class: 'btn small', onclick: () => sync(repo.id) }, 'Sync') : ''),
@@ -318,8 +336,120 @@ function renderMatrix() {
   }
 }
 
+function serverSpec(name) {
+  return state.servers.find((s) => s.name === name);
+}
+
+/** Required params (no default) that the repository has not set. */
+function missingParams(repo, name) {
+  const values = (repo.params && repo.params[name]) || {};
+  return serverSpec(name).params.filter((p) => p.required && p.default === undefined && values[p.name] === undefined).map((p) => p.name);
+}
+
+function gearButton(repo, name) {
+  const spec = serverSpec(name);
+  if (!spec || !spec.params.length) return null;
+  const set = Object.keys((repo.params && repo.params[name]) || {}).length;
+  const missing = missingParams(repo, name);
+  return el('button', {
+    class: `gear ${missing.length ? 'missing' : set ? 'set' : ''}`,
+    title: missing.length ? `Missing: ${missing.join(', ')}` : `${set} of ${spec.params.length} params set for this repository`,
+    'aria-label': `Params of ${name} for ${repo.id}`,
+    onclick: () => openParams(repo, name, false),
+  }, missing.length ? '⚙ !' : set ? `⚙ ${set}` : '⚙');
+}
+
+// ---------- dialogs ----------
+function openDialog(title, body, actions) {
+  const d = $('#dlg');
+  d.replaceChildren(el('div', { class: 'dlg' },
+    el('h3', {}, title), body,
+    el('div', { class: 'msg error', id: 'dlg-error', hidden: true }),
+    el('div', { class: 'row-end' }, actions)));
+  d.showModal();
+}
+const closeDialog = () => $('#dlg').close();
+function dialogError(message) {
+  const e = $('#dlg-error');
+  e.textContent = message;
+  e.hidden = !message;
+}
+
+function openParams(repo, name, attach) {
+  const spec = serverSpec(name);
+  const values = (repo.params && repo.params[name]) || {};
+  const inputs = {};
+  const rows = spec.params.map((p) => {
+    const cur = values[p.name] === undefined ? '' : String(values[p.name]);
+    let input;
+    if (p.type === 'boolean') {
+      input = el('select', { name: p.name },
+        el('option', { value: '' }, p.default !== undefined ? `default (${p.default})` : '— not set —'),
+        el('option', { value: 'true' }, 'true'), el('option', { value: 'false' }, 'false'));
+      input.value = cur;
+    } else {
+      input = el('input', {
+        type: p.type === 'number' ? 'number' : 'text', name: p.name, spellcheck: 'false', autocomplete: 'off', value: cur,
+        placeholder: p.default !== undefined ? `default: ${p.default}` : p.type === 'secret' ? 'env://VAR_NAME' : p.required ? 'required' : 'optional',
+      });
+    }
+    inputs[p.name] = input;
+    return el('label', {},
+      el('span', {}, el('code', {}, p.name), el('span', { class: 'pill' }, p.type),
+        p.required && p.default === undefined ? el('span', { class: 'pill err' }, 'required') : null),
+      input,
+      p.type === 'secret' ? el('span', { class: 'hint' }, 'A reference, not the key itself: env://VAR_NAME — the value is read from your shell.') : null,
+      p.description ? el('span', { class: 'hint' }, p.description) : null);
+  });
+  const save = el('button', { class: 'btn primary', type: 'button' }, attach ? 'Attach & save' : 'Save');
+  save.addEventListener('click', async () => {
+    const params = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value]));
+    save.disabled = true;
+    try {
+      await api('POST', '/api/params', { repo: repo.id, server: name, params, attach });
+      closeDialog();
+      toast(attach ? `Attached ${name} → ${repo.id}` : `Saved ${name} params for ${repo.id}`);
+      await refresh();
+      if (repo.clones.length) await sync(repo.id, false, true);
+    } catch (e) {
+      dialogError(e.message);
+      save.disabled = false;
+    }
+  });
+  openDialog(`${name} · ${repo.id}`,
+    el('div', {}, el('p', { class: 'hint' }, 'Empty fields use the default. These values apply to this repository only.'), rows),
+    [el('button', { class: 'btn', type: 'button', onclick: closeDialog }, 'Cancel'), save]);
+  const first = Object.values(inputs)[0];
+  if (first) first.focus();
+}
+
+async function openSource(s) {
+  await guard(async () => {
+    const q = s.repo ? `?repo=${encodeURIComponent(s.repo)}` : '';
+    const src = await api('GET', `/api/servers/${encodeURIComponent(s.name)}/source${q}`);
+    const ta = el('textarea', { class: 'source', spellcheck: 'false' });
+    ta.value = src.yaml;
+    const save = el('button', { class: 'btn primary', type: 'button' }, 'Save');
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      try {
+        const r = await api('PUT', `/api/servers/${encodeURIComponent(s.name)}/source${q}`, { yaml: ta.value });
+        closeDialog();
+        toast(r.warnings.length ? `Saved with ${r.warnings.length} warning(s): ${r.warnings[0].message}` : `Saved ${src.path}`);
+        await refresh();
+      } catch (e) {
+        dialogError(e.message);
+        save.disabled = false;
+      }
+    });
+    openDialog(src.path, el('div', {}, ta,
+      el('p', { class: 'hint' }, 'Declare params under "params:" (type: string | number | boolean | secret, required, default) and use them as {{ params.name }}. Saving re-validates the whole registry and is refused if it would break a repository.')),
+      [el('button', { class: 'btn', type: 'button', onclick: closeDialog }, 'Cancel'), save]);
+  });
+}
+
 function serverRow(s) {
-  const actions = [];
+  const actions = [el('button', { class: 'btn small', title: 'Edit the definition (YAML)', onclick: () => openSource(s) }, 'Edit')];
   if (s.repo) {
     actions.push(el('button', { class: 'btn small', title: 'Move to servers/ so other repositories can use it', onclick: () => moveServer('share', s) }, 'Make shared'));
   } else if (s.usedBy.length === 1) {
@@ -338,6 +468,9 @@ function serverRow(s) {
       s.description ? el('div', {}, s.description) : null,
       el('div', { class: 'summary' }, s.summary),
       s.envVars.length ? el('div', {}, el('span', { class: 'hint' }, 'needs env: '), s.envVars.map((v) => el('span', { class: 'chip' }, v))) : null,
+      !s.repo && s.params.some((p) => p.type !== 'secret' || p.default === undefined)
+        ? el('div', {}, el('span', { class: 'hint' }, 'per-repo params: '), s.params.map((p) => el('span', { class: 'own-chip', title: p.description || p.type }, p.name + (p.required && p.default === undefined ? '*' : ''))))
+        : null,
     ),
     el('div', { class: 'side' }, s.repo ? null : el('span', { class: 'hint' }, `used by ${s.usedBy.length}`), actions),
   );
@@ -457,6 +590,10 @@ async function addServer() {
 
 // ---------- repositories ----------
 async function toggle(repo, server, attached, input) {
+  if (attached && serverSpec(server).params.some((p) => p.required && p.default === undefined)) {
+    input.checked = false; // attached only once the required values are saved
+    return openParams(repo, server, true);
+  }
   input.disabled = true;
   const ok = await guard(async () => {
     await api('POST', '/api/bindings', { repo: repo.id, server, attached });

@@ -17,11 +17,12 @@ Thiết kế và lý do: [`docs/architecture-brainstorm.md`](docs/architecture-b
 
 ## Cài đặt
 
-Yêu cầu Node.js ≥ 20 (và `uvx` nếu dùng server Python như code-graph).
+Cần Node.js ≥ 20. Project viết bằng TypeScript; chỉ cần `uvx` nếu bạn dùng server chạy bằng Python (ví dụ code-graph).
 
 ```bash
 git clone https://github.com/ntbang0901/mcp-registry ~/code/mcp-registry
-cd ~/code/mcp-registry && npm install && npm run build && npm link   # cài lệnh `loadout`
+cd ~/code/mcp-registry
+npm install && npm run build && npm link      # cài lệnh `loadout`
 
 loadout init --registry ~/code/mcp-registry --workspace ~/code
 ```
@@ -30,9 +31,24 @@ loadout init --registry ~/code/mcp-registry --workspace ~/code
 
 ```yaml
 registry: /home/me/code/mcp-registry
-workspaces: [/home/me/code]        # nơi `sync --all` đi tìm repo
+workspaces: [/home/me/code]        # nơi `sync --all` và UI đi tìm repo
 targets: [claude-code, cursor]     # client cần sinh config
 ```
+
+### Chuyển một repo đang có config MCP viết tay
+
+```bash
+cd ~/code/my-api
+loadout import                                  # .mcp.json / .cursor/mcp.json → registry (API key không bị chép)
+loadout sync --force                            # thay file viết tay bằng file sinh ra (giữ bản .bak)
+git rm --cached .mcp.json .cursor/mcp.json      # nếu trước đây đã commit chúng
+git commit -m "Move MCP config to the registry"
+export LINKUP_API_KEY=…                         # các biến `import` báo cần export (đặt trong ~/.zshrc hoặc ~/.bashrc)
+
+cd ~/code/mcp-registry && git add -A && git commit -m "Import my-api" && git push
+```
+
+Sau đó mở `loadout ui` để quản lý tiếp. Trên máy khác: clone registry, `npm install && npm run build && npm link`, `loadout init`, rồi `loadout sync --all`.
 
 ## Giao diện web
 
@@ -120,15 +136,6 @@ loadout validate                       # kiểm tra registry (chạy trong CI)
 ```
 
 Sau khi `attach`/`detach`/sửa `servers/*.yaml`: **commit registry** (`git -C ~/code/mcp-registry commit -am "..."`).
-
-### Chuyển repo đang có config viết tay
-
-```bash
-cd ~/code/repo-a
-loadout import            # đọc .mcp.json / .cursor/mcp.json → servers/*.yaml + bindings.yaml
-loadout sync --force      # thay file viết tay bằng file sinh ra (giữ bản .bak)
-git rm --cached .mcp.json .cursor/mcp.json   # nếu trước đây đã commit chúng
-```
 
 `import` **không bao giờ chép giá trị secret** vào registry: API key trong env, header, query (`?apiKey=`) hay argument được thay bằng tham chiếu `env://NAME`, và in ra biến môi trường bạn cần export.
 

@@ -870,8 +870,8 @@ Không làm ở MVP: environment overlay, semver từng server, Web UI, API, RBA
 
 | # | Quyết định | Khuyến nghị | Vì sao phải chốt sớm |
 |---|---|---|---|
-| D1 | Nguồn sự thật của mapping: trong repo hay `repositories/` trung tâm? | Trong repo (manifest) | Quyết định toàn bộ ownership, CLI, GitOps flow |
-| D2 | File generated: commit hay gitignore? | Commit + CI chặn drift | Ảnh hưởng cloud agent, onboarding, review |
+| D1 | Nguồn sự thật của mapping: trong repo hay `repositories/` trung tâm? | Quy mô nhỏ / binding không tham số: **trung tâm** (xem §21). Nhiều team, nhiều tham số theo repo: trong repo | Quyết định toàn bộ ownership, CLI, GitOps flow |
+| D2 | File generated: commit hay gitignore? | Theo D1: mapping trung tâm → **gitignore** (§21); mapping trong repo → commit + CI chặn drift | Ảnh hưởng cloud agent, onboarding, review |
 | D3 | Chiến lược secret: launcher (S2) hay env interpolation (S1)? Provider đầu tiên? | S3 > S2 > S1; provider = cái đang dùng | Quyết định CLI có phải cài ở mọi nơi agent chạy không |
 | D4 | Client nào ở MVP? | 2 client dùng nhiều nhất | Quyết định độ phức tạp IR |
 | D5 | Versioning: snapshot registry hay semver từng server? | Snapshot cho MVP | Ảnh hưởng format lockfile — khó đổi sau |
@@ -889,3 +889,127 @@ Không làm ở MVP: environment overlay, semver từng server, Web UI, API, RBA
 - Monorepo: một repo nhiều service, mỗi service cần MCP khác nhau → manifest ở cấp thư mục con? (Client có hỗ trợ config theo thư mục con không?)
 - Cloud agents (agent chạy trong container từ repo clone mới): lấy secret bằng identity nào?
 - Ai review bảo mật cho server mới được đưa vào catalog?
+
+---
+
+## 21. Case study: context7 / linkup / code-graph — điều chỉnh khuyến nghị
+
+Hiện trạng:
+
+```text
+repo-a/.mcp.json         → context7 + linkup     (định nghĩa đầy đủ: command, args, key)
+repo-b/.mcp.json         → code-graph + linkup   (linkup bị định nghĩa lại lần 2)
+```
+
+Nỗi đau thật gồm hai phần: (1) **định nghĩa bị lặp** (linkup, có thể cả API key, nằm ở 2 nơi); (2) **mapping rải rác**: muốn biết hoặc sửa "repo nào dùng gì" phải đi vào từng repo.
+
+Lý do chính ở §H để đặt mapping trong repo là *tham số riêng theo repo* (database, Jira project) và *nhiều team sở hữu*. Ở case này cả hai lý do đều yếu: context7 và linkup không có tham số theo repo, code-graph chỉ cần đường dẫn repo (suy ra được bằng context variable `{{ repo.root }}`). Vì vậy **mapping trung tâm là lựa chọn đúng**, và repo không giữ bản sao config nào.
+
+### 21.1 Cấu trúc
+
+```text
+mcp-loadout/
+├── servers/
+│   ├── context7.yaml
+│   ├── linkup.yaml
+│   └── code-graph.yaml
+└── bindings.yaml            # một file duy nhất khi còn ít repo; tách repositories/*.yaml khi > ~30 repo
+```
+
+```yaml
+# bindings.yaml — "ai dùng gì" nằm ở một chỗ
+repositories:
+  github.com/ntbang0901/repo-a: [context7, linkup]
+  github.com/ntbang0901/repo-b: [code-graph, linkup]
+```
+
+```yaml
+# servers/linkup.yaml — định nghĩa một lần (remote server của Linkup, key gửi qua header)
+name: linkup
+transport:
+  type: http
+  url: https://mcp.linkup.so/mcp
+  headers:
+    Authorization: "Bearer {{ params.apiKey }}"
+params:
+  apiKey: { type: secret, default: env://LINKUP_API_KEY }   # một secret ref cho mọi repo
+```
+
+```yaml
+# servers/code-graph.yaml — tham số duy nhất suy ra từ repo
+name: code-graph
+transport:
+  type: stdio
+  package: { registry: pypi, name: code-graph-mcp, version: 1.2.4 }
+  args: ["--project-root", "{{ repo.root }}"]
+```
+
+### 21.2 Repo chứa gì
+
+Không commit gì liên quan MCP. `loadout sync` (chạy trong repo) nhận diện repo qua git remote, tra `bindings.yaml`, render `.mcp.json` / `.cursor/mcp.json` và ignore chúng qua `.git/info/exclude` (không cần sửa `.gitignore` của repo).
+
+### 21.3 Thao tác hằng ngày
+
+| Việc | Trước | Sau |
+|---|---|---|
+| Xem repo nào dùng gì | Mở từng repo | `loadout matrix` (bảng repo × server) hoặc đọc `bindings.yaml` |
+| Thêm linkup cho repo C | Copy block JSON + key | Trong repo C: `loadout attach linkup` (tự sync) → commit registry |
+| Nâng version / đổi key linkup | Sửa N repo | Sửa `servers/linkup.yaml` một lần → `loadout sync --all` |
+| Bỏ context7 khỏi repo A | Sửa file trong repo A | `loadout detach context7 --repo repo-a` → sync |
+
+`loadout sync --all` quét thư mục làm việc (vd. `~/code`), tìm mọi repo có trong `bindings.yaml` và render lại.
+
+### 21.4 Trade-off chấp nhận
+
+- **Không theo branch:** mọi branch của repo dùng cùng bộ MCP — chấp nhận được với các server dạng công cụ (docs, search, code graph).
+- **Cloud agent / máy mới** không có MCP cho tới khi chạy `loadout sync` (có thể đưa vào session-start hook).
+- **Lệch sau khi sửa registry** cho tới lần sync kế tiếp — `loadout status` báo repo nào đang cũ.
+- Khi sau này có server cần tham số riêng theo repo hoặc nhiều team sở hữu repo, có thể cho phép override cục bộ trong repo — nhưng **phải giữ đúng một nguồn sự thật cho danh sách server**.
+
+---
+
+## 22. Quyết định đã chốt cho v0.1 (đã implement)
+
+| # | Quyết định | Đã chốt |
+|---|---|---|
+| 1 | Ngôn ngữ / phân phối | TypeScript, Node ≥ 20; cài bằng `npm link` (chưa publish npm) |
+| 2 | CLI tìm registry | `~/.config/loadout/config.yaml` (`loadout init`), override bằng `--registry` / `$LOADOUT_REGISTRY` |
+| 3 | CLI + dữ liệu | Chung repo `mcp-registry`: `src/` (CLI), `servers/` + `bindings.yaml` (dữ liệu), `schemas/` |
+| 4 | Secret | Chỉ `env://NAME`; file sinh ra dùng `${NAME}` (Claude Code) / `${env:NAME}` (Cursor). `validate` chặn secret viết thẳng |
+| 5 | Client | Claude Code (`.mcp.json`) + Cursor (`.cursor/mcp.json`) |
+| 6 | File viết tay | Không ghi đè; theo dõi file do loadout sinh bằng hash (`~/.local/state/loadout/state.json`); `--force` giữ `.bak`. `loadout import` để chuyển đổi |
+| 7 | Nhận diện repo | `git remote origin` → `host/owner/name` (lowercase, bỏ `.git`) |
+| 8 | Tên CLI | `loadout` |
+| 9 | Lockfile / profile | Chưa làm |
+| D1 | Nguồn sự thật mapping | `bindings.yaml` trung tâm |
+| D2 | File sinh ra | Không commit; ignore qua `.git/info/exclude` |
+
+Lệnh có trong v0.1: `init`, `add [--repo-only]`, `remove`, `share`, `unshare`, `set`, `ui`, `sync [--all] [--force] [--dry-run]`, `status [--all]`, `attach`, `detach`, `matrix`, `import`, `validate`.
+
+**Thêm server không cần viết YAML:** `loadout add` (JSON dán từ README / `--url` / `-- <command>`) và `loadout ui` (web UI local: form + dán JSON có preview, ma trận repo × server, sync, commit). UI là server HTTP chỉ bind `127.0.0.1`, mọi request cần token ngẫu nhiên theo phiên và Host header phải là local (chống CSRF / DNS rebinding). Git vẫn là nguồn sự thật — UI chỉ sửa file trong registry.
+
+Chưa làm (theo thứ tự ưu tiên đề xuất): secret provider ngoài `env://` (1Password / keychain) và launcher `loadout exec`; smoke test server trong CI (`initialize` + `tools/list`); adapter VS Code / Codex; profile; lockfile + version theo server; environment overlay.
+
+---
+
+## 23. Server riêng của repo (repository-only)
+
+Bối cảnh: một số MCP chỉ có ý nghĩa với đúng một repo (script MCP nằm trong repo, DB của riêng service, server nội bộ). Đặt chúng vào catalog chung làm catalog phình ra, bảng repo × server thêm cột chỉ có một dấu tick, và tên dễ đụng nhau (`db`).
+
+Quyết định:
+
+- **Vẫn nằm trong registry** (một nguồn sự thật, review/rollback như mọi thứ khác), nhưng ở `repos/<host>/<owner>/<name>/<server>.yaml` — thư mục chính là repo id đã chuẩn hoá.
+- **Không cần binding:** file nằm trong thư mục của repo nào thì server áp dụng cho repo đó. Tên chỉ cần duy nhất trong repo.
+- **Không được trùng tên** với server dùng chung mà repo đó đang gắn (`validate` báo lỗi).
+- **Chuyển phạm vi là thao tác hạng nhất:** `share` (riêng → chung, giữ binding) và `unshare` (chung nhưng chỉ ≤ 1 repo dùng → riêng). Nhờ vậy không phải đoán trước: bắt đầu riêng, khi repo thứ hai cần thì share.
+- Phương án đã loại: để server riêng trong chính repo (file local) — tiện cho thay đổi theo branch nhưng tạo nguồn sự thật thứ hai cho danh sách server, đúng điều §21 đã chọn tránh.
+
+---
+
+## 24. Tham số theo repo trên UI
+
+- **Khai báo bằng placeholder:** khi thêm server, `{{ params.x }}` chưa khai báo được tự khai báo là tham số `string` bắt buộc (ở vị trí secret — env/header/flag có tên dạng key/token/password — là `secret`). Không cần biết schema `params:` để bắt đầu.
+- **Giá trị nằm trong `bindings.yaml`** (dạng map, `params:` dưới server). Repo nào không có tham số giữ dạng list gọn `[a, b]`; tool tự chuyển qua lại và giữ comment cuối dòng.
+- **Kiểm tra trước khi ghi:** ép kiểu theo khai báo, chạy resolve như lúc sync; lỗi → không ghi. Tick một server có tham số bắt buộc mở form trước, chỉ gắn khi lưu thành công — registry không bao giờ ở trạng thái thiếu tham số (vốn chặn sync của mọi repo).
+- **Sửa định nghĩa server trên UI:** ghi file, validate lại toàn registry, khôi phục file cũ nếu xuất hiện lỗi mới.
+- Server riêng của repo không có tham số theo repo (không có binding): giá trị viết thẳng vào định nghĩa; placeholder bị báo lỗi khi thêm.

@@ -1,0 +1,39 @@
+name: release
+
+# Publish the CLI: bump the version and push the tag.
+#   npm version minor && git push --follow-tags
+# Users install it with:
+#   npm install -g https://github.com/ntbang0901/mcp-registry/releases/latest/download/mcp-loadout.tgz
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Tag matches package.json version
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run ci
+      - name: Pack, then install and smoke-test the exact tarball users will get
+        run: |
+          npm pack
+          mv mcp-loadout-*.tgz mcp-loadout.tgz
+          sha256sum mcp-loadout.tgz > mcp-loadout.tgz.sha256
+          npm install -g ./mcp-loadout.tgz
+          LOADOUT_BIN="$(command -v loadout)" node scripts/smoke.mjs .
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" mcp-loadout.tgz mcp-loadout.tgz.sha256 --title "$GITHUB_REF_NAME" --generate-notes

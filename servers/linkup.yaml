@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=../schemas/server.schema.json
+name: linkup
+description: Web search via Linkup (remote MCP server).
+owner: ntbang0901
+tags: [search, web]
+status: stable
+transport:
+  type: http
+  url: https://mcp.linkup.so/mcp
+  headers:
+    Authorization: "Bearer {{ params.apiKey }}"
+params:
+  apiKey:
+    type: secret
+    description: Linkup API key (https://app.linkup.so). Export LINKUP_API_KEY in your shell.
+    default: env://LINKUP_API_KEY

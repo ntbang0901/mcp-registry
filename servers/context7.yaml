@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../schemas/server.schema.json
+name: context7
+description: Up-to-date library documentation and code examples (Upstash Context7, remote).
+owner: ntbang0901
+tags: [docs, libraries]
+status: stable
+transport:
+  type: http
+  url: https://mcp.context7.com/mcp
+  headers:
+    CONTEXT7_API_KEY: "{{ params.apiKey }}"
+params:
+  apiKey:
+    type: secret
+    description: >-
+      Optional; raises rate limits. Set per repository in bindings.yaml
+      (apiKey: env://CONTEXT7_API_KEY). When unset, the header is omitted.

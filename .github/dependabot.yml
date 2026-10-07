@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # One PR per week for routine updates. Major versions arrive as separate PRs to review on their own.
+      dependencies:
+        update-types: [minor, patch]
+    ignore:
+      # Kept in step with the Chromium build used by `npx playwright install`; bump deliberately.
+      - dependency-name: '@playwright/test'
+      # Types follow the oldest supported Node (package.json "engines"), not the newest release.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      # typescript-eslint pins a TypeScript peer range; take a new TypeScript major once it supports it.
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']

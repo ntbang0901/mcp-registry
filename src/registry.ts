@@ -1,0 +1,207 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { basename, join, relative } from 'node:path';
+import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv';
+import YAML from 'yaml';
+import { LoadoutError } from './errors.js';
+import { normalizeRepoId, repoContext } from './repo.js';
+import { parseSecretRef, resolveServer } from './resolve.js';
+import { templateRefs } from './template.js';
+import type { Binding, ParamValue, ServerDef } from './types.js';
+
+export interface Problem {
+  level: 'error' | 'warning';
+  file: string;
+  message: string;
+}
+
+export interface Registry {
+  root: string;
+  servers: Map<string, ServerDef>;
+  /** Normalized repository id -> bindings, in declaration order. */
+  bindings: Map<string, Binding[]>;
+  bindingsPath: string;
+}
+
+export const BINDINGS_FILE = 'bindings.yaml';
+export const SERVERS_DIR = 'servers';
+
+/** Names that usually hold credentials (env vars, headers, query params, CLI flags). */
+export const SECRET_NAME = /(api[_-]?key|apikey|token|secret|passw(or)?d|credential|authorization|private[_-]?key)/i;
+
+let validators: { server: ValidateFunction; bindings: ValidateFunction } | undefined;
+function getValidators() {
+  if (!validators) {
+    const ajv = new Ajv({ allErrors: true, strict: false });
+    const load = (f: string) => JSON.parse(readFileSync(new URL(`../schemas/${f}`, import.meta.url), 'utf8'));
+    validators = {
+      server: ajv.compile(load('server.schema.json')),
+      bindings: ajv.compile(load('bindings.schema.json')),
+    };
+  }
+  return validators;
+}
+
+function schemaMessages(errors: ErrorObject[] | null | undefined): string[] {
+  // oneOf failures are noisy; keep the most specific messages.
+  const relevant = (errors ?? []).filter((e) => e.keyword !== 'oneOf' && e.keyword !== 'not' && e.keyword !== 'if');
+  const list = relevant.length ? relevant : (errors ?? []);
+  return [...new Set(list.map((e) => `${e.instancePath || '/'} ${e.message}${e.keyword === 'additionalProperties' ? `: ${(e.params as { additionalProperty: string }).additionalProperty}` : ''}`))];
+}
+
+function parseYaml(file: string, problems: Problem[]): unknown {
+  try {
+    return YAML.parse(readFileSync(file, 'utf8'));
+  } catch (e) {
+    problems.push({ level: 'error', file, message: `invalid YAML: ${(e as Error).message}` });
+    return undefined;
+  }
+}
+
+function lintServer(def: ServerDef, file: string, problems: Problem[]) {
+  const err = (message: string) => problems.push({ level: 'error', file, message });
+  const warn = (message: string) => problems.push({ level: 'warning', file, message });
+  const params = def.params ?? {};
+  const t = def.transport;
+  const templates: Array<[string, string]> = [];
+  if (t.type === 'http') {
+    templates.push(['url', t.url]);
+    for (const [k, v] of Object.entries(t.headers ?? {})) templates.push([`headers.${k}`, v]);
+  } else {
+    if (t.command) templates.push(['command', t.command]);
+    (t.args ?? []).forEach((a, i) => templates.push([`args[${i}]`, a]));
+    for (const [k, v] of Object.entries(t.env ?? {})) templates.push([`env.${k}`, v]);
+  }
+  const used = new Set<string>();
+  for (const [where, tpl] of templates) {
+    try {
+      for (const r of templateRefs(tpl)) {
+        if (r.scope !== 'params') continue;
+        used.add(r.name);
+        if (!(r.name in params)) err(`${where} references undeclared param "${r.name}"`);
+      }
+    } catch (e) {
+      err(`${where}: ${(e as Error).message}`);
+    }
+  }
+  for (const [name, spec] of Object.entries(params)) {
+    if (!used.has(name)) warn(`param "${name}" is declared but never used`);
+    if (spec.type === 'secret' && spec.default !== undefined) {
+      try {
+        if (typeof spec.default !== 'string') throw new Error('must be a string');
+        parseSecretRef(spec.default);
+      } catch (e) {
+        err(`param "${name}" default: ${(e as Error).message}`);
+      }
+    }
+  }
+  // Plaintext secrets must never live in the registry.
+  const hasParam = (v: string) => /\{\{\s*params\./.test(v);
+  const secretEntries =
+    t.type === 'http' ? Object.entries(t.headers ?? {}).map(([k, v]) => [`headers.${k}`, k, v]) : Object.entries(t.env ?? {}).map(([k, v]) => [`env.${k}`, k, v]);
+  for (const [where, key, value] of secretEntries) {
+    if (SECRET_NAME.test(key) && value && !hasParam(value)) err(`${where} looks like a plaintext secret; use a secret param`);
+  }
+  if (t.type === 'http') {
+    const query = t.url.split('?')[1]?.split('#')[0] ?? '';
+    for (const pair of query.split('&').filter(Boolean)) {
+      const [k, v = ''] = pair.split('=');
+      if (SECRET_NAME.test(k) && !hasParam(v)) err(`url query "${k}" looks like a plaintext secret; use a secret param`);
+    }
+  } else if (t.command && /^(npx|uvx|bunx|pipx)$/.test(t.command)) {
+    warn(`command "${t.command}" runs an unpinned package; use transport.package with an exact version`);
+  }
+}
+
+export function loadRegistry(root: string): { registry: Registry; problems: Problem[] } {
+  const problems: Problem[] = [];
+  const { server: validateServer, bindings: validateBindings } = getValidators();
+  const rel = (f: string) => relative(root, f) || f;
+
+  const servers = new Map<string, ServerDef>();
+  const serversDir = join(root, SERVERS_DIR);
+  if (!existsSync(serversDir)) {
+    problems.push({ level: 'error', file: SERVERS_DIR, message: 'directory not found — is this a loadout registry?' });
+  } else {
+    for (const f of readdirSync(serversDir).sort()) {
+      if (!/\.ya?ml$/.test(f)) continue;
+      const file = join(serversDir, f);
+      const data = parseYaml(file, problems);
+      if (data === undefined) continue;
+      if (!validateServer(data)) {
+        for (const m of schemaMessages(validateServer.errors)) problems.push({ level: 'error', file: rel(file), message: m });
+        continue;
+      }
+      const def = data as ServerDef;
+      const expected = basename(f).replace(/\.ya?ml$/, '');
+      if (def.name !== expected) {
+        problems.push({ level: 'error', file: rel(file), message: `name "${def.name}" must match the file name "${expected}"` });
+        continue;
+      }
+      lintServer(def, rel(file), problems);
+      servers.set(def.name, def);
+    }
+  }
+
+  const bindingsPath = join(root, BINDINGS_FILE);
+  const bindings = new Map<string, Binding[]>();
+  if (existsSync(bindingsPath)) {
+    const data = parseYaml(bindingsPath, problems);
+    if (data !== undefined && !validateBindings(data ?? {})) {
+      for (const m of schemaMessages(validateBindings.errors)) problems.push({ level: 'error', file: BINDINGS_FILE, message: m });
+    } else if (data) {
+      const repos = (data as { repositories: Record<string, unknown> | null }).repositories ?? {};
+      for (const [key, value] of Object.entries(repos)) {
+        let id: string;
+        try {
+          id = normalizeRepoId(key);
+        } catch (e) {
+          problems.push({ level: 'error', file: BINDINGS_FILE, message: (e as Error).message });
+          continue;
+        }
+        if (bindings.has(id)) {
+          problems.push({ level: 'error', file: BINDINGS_FILE, message: `repository "${id}" is listed more than once` });
+          continue;
+        }
+        const list: Binding[] = Array.isArray(value)
+          ? value.map((server: string) => ({ server, params: {} }))
+          : Object.entries((value ?? {}) as Record<string, { params?: Record<string, ParamValue> } | null>).map(
+              ([server, b]) => ({ server, params: b?.params ?? {} }),
+            );
+        const seen = new Set<string>();
+        const ctx = repoContext(id, `/path/to/${id.split('/').pop()}`);
+        for (const b of list) {
+          const where = `${id} → ${b.server}`;
+          if (seen.has(b.server)) problems.push({ level: 'error', file: BINDINGS_FILE, message: `${where}: listed twice` });
+          seen.add(b.server);
+          const def = servers.get(b.server);
+          if (!def) {
+            problems.push({ level: 'error', file: BINDINGS_FILE, message: `${where}: unknown server (no ${SERVERS_DIR}/${b.server}.yaml)` });
+            continue;
+          }
+          if (def.status === 'deprecated') problems.push({ level: 'warning', file: BINDINGS_FILE, message: `${where}: server is deprecated` });
+          try {
+            resolveServer(def, b, ctx);
+          } catch (e) {
+            problems.push({ level: 'error', file: BINDINGS_FILE, message: `${where}: ${(e as Error).message}` });
+          }
+        }
+        bindings.set(id, list);
+      }
+    }
+  }
+  return { registry: { root, servers, bindings, bindingsPath }, problems };
+}
+
+export function formatProblems(problems: Problem[]): string {
+  return problems.map((p) => `  ${p.level === 'error' ? 'error  ' : 'warning'} ${p.file}: ${p.message}`).join('\n');
+}
+
+/** Load the registry and fail if it has errors (warnings are returned for display). */
+export function loadValidRegistry(root: string): { registry: Registry; warnings: Problem[] } {
+  const { registry, problems } = loadRegistry(root);
+  const errors = problems.filter((p) => p.level === 'error');
+  if (errors.length) {
+    throw new LoadoutError(`Registry at ${root} is invalid:\n${formatProblems(errors)}\nRun "loadout validate" for details.`);
+  }
+  return { registry, warnings: problems.filter((p) => p.level === 'warning') };
+}

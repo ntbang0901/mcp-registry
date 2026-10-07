@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=../schemas/server.schema.json
+# Assumes the PyPI package "code-graph-mcp" — replace it if your repos use a different code-graph server.
+name: code-graph
+description: Code graph analysis and navigation across 25+ languages.
+owner: ntbang0901
+tags: [code, analysis]
+status: experimental
+transport:
+  type: stdio
+  package:
+    registry: pypi
+    name: code-graph-mcp
+    version: 1.2.4
+  args: ["--project-root", "{{ repo.root }}"]

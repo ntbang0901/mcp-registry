@@ -1,0 +1,122 @@
+# mcp-registry (`loadout`)
+
+Registry trung tâm cho MCP: **định nghĩa MCP server một lần**, **map server → repository** ở một chỗ, rồi tự sinh config cho từng AI client (Claude Code, Cursor) trong mỗi repo.
+
+```text
+mcp-registry/                     repo-a/                       repo-b/
+├── servers/                      ├── .mcp.json        ◄─┐      ├── .mcp.json        ◄─┐
+│   ├── context7.yaml             └── .cursor/mcp.json ◄─┤      └── .cursor/mcp.json ◄─┤
+│   ├── linkup.yaml                   (generated, git-ignored)  (generated, git-ignored)
+│   └── code-graph.yaml                                  │                             │
+└── bindings.yaml  ── loadout sync ──────────────────────┴─────────────────────────────┘
+```
+
+Repo không commit gì liên quan tới MCP. Mọi thay đổi (thêm/bớt server, đổi version, đổi key) làm ở registry rồi `loadout sync`.
+
+Thiết kế và lý do: [`docs/architecture-brainstorm.md`](docs/architecture-brainstorm.md).
+
+## Cài đặt
+
+Yêu cầu Node.js ≥ 20 (và `uvx` nếu dùng server Python như code-graph).
+
+```bash
+git clone https://github.com/ntbang0901/mcp-registry ~/code/mcp-registry
+cd ~/code/mcp-registry && npm install && npm run build && npm link   # cài lệnh `loadout`
+
+loadout init --registry ~/code/mcp-registry --workspace ~/code
+```
+
+`init` ghi `~/.config/loadout/config.yaml`:
+
+```yaml
+registry: /home/me/code/mcp-registry
+workspaces: [/home/me/code]        # nơi `sync --all` đi tìm repo
+targets: [claude-code, cursor]     # client cần sinh config
+```
+
+## Dùng hằng ngày
+
+```bash
+loadout matrix                         # repo nào dùng server nào
+cd ~/code/repo-c
+loadout attach linkup context7         # sửa bindings.yaml + sinh config cho repo hiện tại
+loadout detach context7
+loadout attach code-graph --repo github.com/ntbang0901/repo-a   # sửa repo khác (không sync)
+loadout sync                           # sinh lại config cho repo hiện tại
+loadout sync --all                     # sinh lại cho mọi repo đã clone trong workspaces
+loadout status [--all]                 # config đã cập nhật chưa (exit 1 nếu chưa)
+loadout validate                       # kiểm tra registry (chạy trong CI)
+```
+
+Sau khi `attach`/`detach`/sửa `servers/*.yaml`: **commit registry** (`git -C ~/code/mcp-registry commit -am "..."`).
+
+### Chuyển repo đang có config viết tay
+
+```bash
+cd ~/code/repo-a
+loadout import            # đọc .mcp.json / .cursor/mcp.json → servers/*.yaml + bindings.yaml
+loadout sync --force      # thay file viết tay bằng file sinh ra (giữ bản .bak)
+git rm --cached .mcp.json .cursor/mcp.json   # nếu trước đây đã commit chúng
+```
+
+`import` **không bao giờ chép giá trị secret** vào registry: API key trong env, header, query (`?apiKey=`) hay argument được thay bằng tham chiếu `env://NAME`, và in ra biến môi trường bạn cần export.
+
+## Định dạng
+
+### `servers/<name>.yaml`
+
+```yaml
+name: linkup
+description: Web search via Linkup
+transport:
+  type: http                       # hoặc stdio
+  url: https://mcp.linkup.so/mcp
+  headers:
+    Authorization: "Bearer {{ params.apiKey }}"
+params:
+  apiKey:
+    type: secret                   # string | number | boolean | secret
+    default: env://LINKUP_API_KEY
+```
+
+```yaml
+name: code-graph
+transport:
+  type: stdio
+  package: { registry: pypi, name: code-graph-mcp, version: 1.2.4 }   # npm → npx, pypi → uvx; version phải pin chính xác
+  args: ["--project-root", "{{ repo.root }}"]
+```
+
+Template chỉ có hai loại biến, không có logic:
+
+- `{{ params.<name> }}` — tham số khai báo trong `params`.
+- `{{ repo.root | id | host | slug | owner | name }}` — suy ra từ repo đang sync.
+
+Tham số `secret` chỉ nhận tham chiếu `env://NAME` (v0.1); file sinh ra dùng cú pháp của từng client (`${NAME}` cho Claude Code, `${env:NAME}` cho Cursor), nên giá trị thật không bao giờ nằm trên đĩa. Một entry (header/env/arg) tham chiếu tham số tuỳ chọn chưa set sẽ bị bỏ đi.
+
+`validate` chặn: schema sai, version không pin, giá trị trông như secret viết thẳng (header `Authorization`, env `*_TOKEN`, query `apiKey`…), tham số không khai báo, server không tồn tại.
+
+### `bindings.yaml`
+
+```yaml
+repositories:
+  github.com/ntbang0901/repo-a: [context7, linkup]
+  github.com/ntbang0901/repo-b:                     # dạng map khi cần tham số riêng
+    code-graph:
+    context7: { params: { apiKey: env://CONTEXT7_API_KEY } }
+```
+
+Key là `host/owner/name`; dán thẳng git URL (`git@github.com:x/y.git`) cũng được. Repo được nhận diện qua `git remote origin`.
+
+## Cách `sync` ghi file
+
+- Chỉ ghi đè file do chính `loadout` sinh ra (theo dõi bằng hash trong `~/.local/state/loadout/state.json`). File viết tay hoặc bị sửa tay → bỏ qua, cần `--force` (giữ `.bak`).
+- File sinh ra được ignore qua `.git/info/exclude`, nên không phải sửa `.gitignore` của repo.
+- Repo không còn server nào → xoá file đã sinh.
+- Cảnh báo nếu biến môi trường secret chưa được set trong shell hiện tại.
+
+## Phát triển
+
+```bash
+npm run typecheck && npm test && npm run build && npm run validate
+```

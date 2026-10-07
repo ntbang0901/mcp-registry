@@ -1,0 +1,33 @@
+{
+  "name": "mcp-loadout",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Central MCP registry: define MCP servers once, map them to repositories, render client configs.",
+  "type": "module",
+  "bin": {
+    "loadout": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "schemas"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "validate": "node dist/cli.js validate --registry ."
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "commander": "^15.0.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

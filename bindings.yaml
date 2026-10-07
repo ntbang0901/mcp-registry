@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=./schemas/bindings.schema.json
+#
+# Which repositories use which MCP servers. Keys are repository ids (host/owner/name);
+# any git remote URL also works. Two forms:
+#
+#   github.com/acme/app: [linkup, context7]                       # list
+#   github.com/acme/api:                                          # map, with params
+#     context7: { params: { apiKey: env://CONTEXT7_API_KEY } }
+#     linkup:
+#
+# Examples below: replace with your real repositories, or run `loadout import` inside a repo.
+repositories:
+  github.com/ntbang0901/repo-a: [context7, linkup]
+  github.com/ntbang0901/repo-b: [code-graph, linkup]

@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ntbang0901/mcp-registry/schemas/bindings.schema.json",
+  "title": "loadout repository bindings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repositories"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "repositories": {
+      "type": ["object", "null"],
+      "description": "Repository id (host/owner/name, or any git remote URL) -> servers it uses.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "null" },
+          {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+          },
+          {
+            "type": "object",
+            "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+            "additionalProperties": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": { "type": ["string", "number", "boolean"] }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -924,15 +924,15 @@ repositories:
 ```
 
 ```yaml
-# servers/linkup.yaml — định nghĩa một lần (package/version/URL là ví dụ, cần điền giá trị thật)
+# servers/linkup.yaml — định nghĩa một lần (remote server của Linkup, key gửi qua header)
 name: linkup
 transport:
-  type: stdio
-  package: { registry: npm, name: "<linkup-mcp-package>", version: "<exact>" }
+  type: http
+  url: https://mcp.linkup.so/mcp
+  headers:
+    Authorization: "Bearer {{ params.apiKey }}"
 params:
-  apiKey: { type: secret, default: "env://LINKUP_API_KEY" }   # một secret ref cho mọi repo
-env:
-  LINKUP_API_KEY: "{{ params.apiKey }}"
+  apiKey: { type: secret, default: env://LINKUP_API_KEY }   # một secret ref cho mọi repo
 ```
 
 ```yaml
@@ -940,20 +940,20 @@ env:
 name: code-graph
 transport:
   type: stdio
-  package: { registry: npm, name: "<code-graph-package>", version: "<exact>" }
-args: ["--repo", "{{ repo.root }}"]
+  package: { registry: pypi, name: code-graph-mcp, version: 1.2.4 }
+  args: ["--project-root", "{{ repo.root }}"]
 ```
 
 ### 21.2 Repo chứa gì
 
-Không commit gì liên quan MCP. `loadout sync` (chạy trong repo) nhận diện repo qua git remote, tra `bindings.yaml`, render `.mcp.json` / `.cursor/mcp.json` và thêm chúng vào `.gitignore`. (Với Claude Code có thể ghi vào *local scope* thay vì file trong repo.)
+Không commit gì liên quan MCP. `loadout sync` (chạy trong repo) nhận diện repo qua git remote, tra `bindings.yaml`, render `.mcp.json` / `.cursor/mcp.json` và ignore chúng qua `.git/info/exclude` (không cần sửa `.gitignore` của repo).
 
 ### 21.3 Thao tác hằng ngày
 
 | Việc | Trước | Sau |
 |---|---|---|
 | Xem repo nào dùng gì | Mở từng repo | `loadout matrix` (bảng repo × server) hoặc đọc `bindings.yaml` |
-| Thêm linkup cho repo C | Copy block JSON + key | `loadout attach linkup --repo repo-c` → commit registry → `loadout sync` |
+| Thêm linkup cho repo C | Copy block JSON + key | Trong repo C: `loadout attach linkup` (tự sync) → commit registry |
 | Nâng version / đổi key linkup | Sửa N repo | Sửa `servers/linkup.yaml` một lần → `loadout sync --all` |
 | Bỏ context7 khỏi repo A | Sửa file trong repo A | `loadout detach context7 --repo repo-a` → sync |
 
@@ -965,3 +965,25 @@ Không commit gì liên quan MCP. `loadout sync` (chạy trong repo) nhận di�
 - **Cloud agent / máy mới** không có MCP cho tới khi chạy `loadout sync` (có thể đưa vào session-start hook).
 - **Lệch sau khi sửa registry** cho tới lần sync kế tiếp — `loadout status` báo repo nào đang cũ.
 - Khi sau này có server cần tham số riêng theo repo hoặc nhiều team sở hữu repo, có thể cho phép override cục bộ trong repo — nhưng **phải giữ đúng một nguồn sự thật cho danh sách server**.
+
+---
+
+## 22. Quyết định đã chốt cho v0.1 (đã implement)
+
+| # | Quyết định | Đã chốt |
+|---|---|---|
+| 1 | Ngôn ngữ / phân phối | TypeScript, Node ≥ 20; cài bằng `npm link` (chưa publish npm) |
+| 2 | CLI tìm registry | `~/.config/loadout/config.yaml` (`loadout init`), override bằng `--registry` / `$LOADOUT_REGISTRY` |
+| 3 | CLI + dữ liệu | Chung repo `mcp-registry`: `src/` (CLI), `servers/` + `bindings.yaml` (dữ liệu), `schemas/` |
+| 4 | Secret | Chỉ `env://NAME`; file sinh ra dùng `${NAME}` (Claude Code) / `${env:NAME}` (Cursor). `validate` chặn secret viết thẳng |
+| 5 | Client | Claude Code (`.mcp.json`) + Cursor (`.cursor/mcp.json`) |
+| 6 | File viết tay | Không ghi đè; theo dõi file do loadout sinh bằng hash (`~/.local/state/loadout/state.json`); `--force` giữ `.bak`. `loadout import` để chuyển đổi |
+| 7 | Nhận diện repo | `git remote origin` → `host/owner/name` (lowercase, bỏ `.git`) |
+| 8 | Tên CLI | `loadout` |
+| 9 | Lockfile / profile | Chưa làm |
+| D1 | Nguồn sự thật mapping | `bindings.yaml` trung tâm |
+| D2 | File sinh ra | Không commit; ignore qua `.git/info/exclude` |
+
+Lệnh có trong v0.1: `init`, `sync [--all] [--force] [--dry-run]`, `status [--all]`, `attach`, `detach`, `matrix`, `import`, `validate`.
+
+Chưa làm (theo thứ tự ưu tiên đề xuất): secret provider ngoài `env://` (1Password / keychain) và launcher `loadout exec`; smoke test server trong CI (`initialize` + `tools/list`); adapter VS Code / Codex; profile; lockfile + version theo server; environment overlay.

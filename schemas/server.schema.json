@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ntbang0901/mcp-registry/schemas/server.schema.json",
+  "title": "loadout MCP server definition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "transport"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Unique server name. Must match the file name (servers/<name>.yaml)."
+    },
+    "description": { "type": "string" },
+    "owner": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "status": { "enum": ["experimental", "stable", "deprecated"] },
+    "transport": {
+      "oneOf": [
+        { "$ref": "#/definitions/stdio" },
+        { "$ref": "#/definitions/http" }
+      ]
+    },
+    "params": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+      "additionalProperties": { "$ref": "#/definitions/param" }
+    }
+  },
+  "definitions": {
+    "template": { "type": "string" },
+    "templateMap": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/template" }
+    },
+    "stdio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "stdio" },
+        "package": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["registry", "name", "version"],
+          "properties": {
+            "registry": { "enum": ["npm", "pypi"] },
+            "name": { "type": "string", "minLength": 1 },
+            "version": {
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?([-.+][0-9A-Za-z.+-]+)?$",
+              "description": "Exact version. Ranges, tags and 'latest' are not allowed."
+            }
+          }
+        },
+        "command": { "$ref": "#/definitions/template" },
+        "args": { "type": "array", "items": { "$ref": "#/definitions/template" } },
+        "env": { "$ref": "#/definitions/templateMap" }
+      },
+      "oneOf": [
+        { "required": ["package"], "not": { "required": ["command"] } },
+        { "required": ["command"], "not": { "required": ["package"] } }
+      ]
+    },
+    "http": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "url"],
+      "properties": {
+        "type": { "const": "http" },
+        "url": { "$ref": "#/definitions/template" },
+        "headers": { "$ref": "#/definitions/templateMap" }
+      }
+    },
+    "param": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["string", "number", "boolean", "secret"] },
+        "description": { "type": "string" },
+        "required": { "type": "boolean" },
+        "default": { "type": ["string", "number", "boolean"] }
+      }
+    }
+  }
+}

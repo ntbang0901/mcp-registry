@@ -126,3 +126,22 @@ test('imports every hand-written MCP config found in the workspace', async ({ pa
   await expect.poll(() => repoFile('web', '.mcp.json')).toContain('"db"');
   expect(repoFile('web', '.mcp.json.bak')).toContain('web_db');
 });
+
+test('scans a folder of projects that are not git repositories', async ({ page }) => {
+  const folder = join(tmp, 'elsewhere');
+  mkdirSync(join(folder, 'notebook'), { recursive: true });
+  writeFileSync(
+    join(folder, 'notebook', '.mcp.json'),
+    JSON.stringify({ mcpServers: { docs: { url: 'https://docs.example.com/mcp' } } }),
+  );
+  await page.goto(url);
+  await page.getByLabel('Folder that contains your projects').fill(folder);
+  await page.getByRole('button', { name: 'Scan', exact: true }).click();
+  const section = page.locator('.section', { hasText: 'MCP configs to import' });
+  await expect(section).toContainText('local/notebook');
+  await section.getByRole('button', { name: 'Import', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: /notebook/ })).toBeVisible();
+  await expect(page.locator('.chip', { hasText: folder })).toHaveCount(0); // chips live on the overview
+  await page.getByRole('link', { name: 'Overview' }).click();
+  await expect(page.locator('.chip', { hasText: folder })).toBeVisible();
+});

@@ -54,7 +54,23 @@ loadout import --all --dry-run   # quét các workspace, liệt kê repo có .mc
 loadout import --all --sync      # nhập tất cả rồi thay các file viết tay bằng file sinh ra (giữ bản .bak)
 ```
 
-Hoặc trên `loadout ui`: mục **MCP configs to import** ở Overview, nút **Import all**.
+Quét một folder bất kỳ (tự thêm vào danh sách workspace):
+
+```bash
+loadout import --dir ~/projects --sync
+```
+
+Hoặc trên `loadout ui`: mục **Folders scanned for projects** (gõ đường dẫn, bấm **Scan**), rồi **MCP configs to import** → **Import all**.
+
+Project không cần là repo GitHub:
+
+| Project | Định danh |
+|---|---|
+| Repo git có remote (GitHub, GitLab, Bitbucket…) | `github.com/owner/name` |
+| Repo git chưa có remote | `local/<đường dẫn trong workspace>` |
+| Folder thường có `.mcp.json` / `.cursor/mcp.json` | `local/<đường dẫn trong workspace>` |
+
+Định danh `local/...` theo đường dẫn tương đối trong workspace, nên máy khác có cùng cấu trúc folder (ví dụ `~/code/clients/acme-api`) sẽ khớp cùng project. Với folder thường, chạy `loadout sync` ngay trong folder project.
 
 Khi nhiều repo có server trùng tên:
 

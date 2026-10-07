@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import {
   commitAdd,
@@ -20,10 +20,10 @@ import {
 import { importCandidates, importRepo, ImportSession } from './importer.js';
 import { requiredParams, updateBindingParams } from './params.js';
 import { attachServers, detachServers } from './bindings-edit.js';
-import { stateDir, type Config } from './config.js';
+import { expandHome, saveConfig, stateDir, type Config } from './config.js';
 import { LoadoutError } from './errors.js';
 import { knownRepos, loadRegistry, loadValidRegistry, type Registry } from './registry.js';
-import { detectRepo, findGitRepos, normalizeRepoId, repoContext } from './repo.js';
+import { findProjects, normalizeRepoId, repoContext, workspaceOf } from './repo.js';
 import { resolveRepo, repoStatus, syncRepo } from './sync.js';
 import { secretEnvNames } from './resolve.js';
 import type { RepoContext, ServerDef } from './types.js';
@@ -51,13 +51,8 @@ function git(root: string, args: string[]): string | undefined {
 
 function localClones(config: Config): Map<string, RepoContext[]> {
   const clones = new Map<string, RepoContext[]>();
-  for (const dir of findGitRepos(config.workspaces)) {
-    try {
-      const repo = detectRepo(dir);
-      clones.set(repo.id, [...(clones.get(repo.id) ?? []), repo]);
-    } catch {
-      /* no remote */
-    }
+  for (const repo of findProjects(config.workspaces)) {
+    clones.set(repo.id, [...(clones.get(repo.id) ?? []), repo]);
   }
   return clones;
 }
@@ -276,6 +271,28 @@ async function handleApi(req: IncomingMessage, url: URL, body: Json, opts: UiOpt
         state.save();
       }
       return { results };
+    }
+    case 'POST /api/workspaces': {
+      // Folders scanned for projects. Saved to the user config so the CLI sees the same ones.
+      const ws = opts.config.workspaces;
+      if (typeof body.remove === 'string') {
+        opts.config.workspaces = ws.filter((w) => w !== body.remove);
+        saveConfig(opts.config);
+        return { workspaces: opts.config.workspaces };
+      }
+      const raw = String(body.add ?? '').trim();
+      if (!raw) throw new LoadoutError('Type the path of a folder that contains your projects');
+      const dir = resolve(expandHome(raw));
+      if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new LoadoutError(`${dir} is not a folder on this machine`);
+      const parent = workspaceOf(dir, ws);
+      if (parent)
+        return {
+          workspaces: ws,
+          note: parent === dir ? `${dir} is already scanned` : `${dir} is already scanned as part of ${parent}`,
+        };
+      opts.config.workspaces = [...ws, dir];
+      saveConfig(opts.config);
+      return { workspaces: opts.config.workspaces };
     }
     case 'POST /api/sync':
       return syncClones(opts, body);

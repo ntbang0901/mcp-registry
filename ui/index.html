@@ -553,6 +553,8 @@ function overviewPage() {
 
     missingEnv.length ? el('div', { class: 'msg warn' }, 'Not set in the shell running loadout ui: ', missingEnv.join(', ')) : null,
 
+    foldersSection(),
+
     importable.length ? el('div', { class: 'section' },
       el('div', { class: 'section-head' },
         el('h2', {}, 'MCP configs to import'),
@@ -596,6 +598,37 @@ function overviewPage() {
         el('span', { class: 'name' }, r.id),
         el('button', { class: 'btn sm', type: 'button', title: r.path, onclick: () => addRepo(r.id) }, 'Add'))))) : null,
   );
+}
+
+function foldersSection() {
+  const input = el('input', { id: 'scan-input', spellcheck: 'false', placeholder: '~/code', 'aria-label': 'Folder that contains your projects' });
+  const form = el('form', { class: 'actions', style: 'flex-wrap:nowrap', onsubmit: (e) => { e.preventDefault(); addWorkspace(input.value); } },
+    input, el('button', { class: 'btn', type: 'submit' }, 'Scan'));
+  return el('div', { class: 'section' },
+    el('div', { class: 'section-head' }, el('h2', {}, 'Folders scanned for projects'),
+      el('span', { class: 'hint push' }, 'Git repositories, and plain folders with .mcp.json or .cursor/mcp.json')),
+    el('div', { class: 'panel', style: 'padding:12px 14px;display:grid;gap:10px' },
+      state.workspaces.length
+        ? el('div', { class: 'actions' }, state.workspaces.map((w) => el('span', { class: 'chip' }, w,
+            el('button', { class: 'icon-btn', type: 'button', title: 'Stop scanning this folder', 'aria-label': `Stop scanning ${w}`, onclick: () => removeWorkspace(w) }, '×'))))
+        : el('div', { class: 'hint' }, 'No folders yet. Add the folder that holds your projects, for example ~/code.'),
+      form));
+}
+
+async function addWorkspace(path) {
+  await guard(async () => {
+    const r = await api('POST', '/api/workspaces', { add: path });
+    toast(r.note || `Scanning ${r.workspaces[r.workspaces.length - 1]}`);
+    await refresh();
+  });
+}
+
+async function removeWorkspace(path) {
+  await guard(async () => {
+    await api('POST', '/api/workspaces', { remove: path });
+    toast(`Stopped scanning ${path}`);
+    await refresh();
+  });
 }
 
 // ---------- repository page ----------

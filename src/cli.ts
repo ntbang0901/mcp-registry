@@ -36,7 +36,7 @@ import {
   SERVERS_DIR,
   type Registry,
 } from './registry.js';
-import { detectRepo, findGitRepos, normalizeRepoId, repoContext } from './repo.js';
+import { detectProject, findProjects, normalizeRepoId, repoContext, workspaceOf } from './repo.js';
 import { repoStatus, syncRepo, type SyncResult } from './sync.js';
 import type { RepoContext } from './types.js';
 import { requiredParams, updateBindingParams } from './params.js';
@@ -56,6 +56,9 @@ program
   .version(VERSION)
   .option('--registry <path>', 'registry path (default: $LOADOUT_REGISTRY or config file)');
 
+/** The project in the current directory (git repository, or a plain folder inside a workspace). */
+const here = () => detectProject(process.cwd(), loadConfig().workspaces);
+
 function context(cmd: Command) {
   const config = loadConfig();
   const root = resolveRegistryRoot((cmd.optsWithGlobals() as GlobalOpts).registry, config);
@@ -72,13 +75,8 @@ function localClones(registry: Registry, config: Config): { clones: RepoContext[
     throw new LoadoutError('No workspaces configured. Run: loadout init --workspace <dir-with-your-repos>');
   }
   const clones: RepoContext[] = [];
-  for (const dir of findGitRepos(config.workspaces)) {
-    try {
-      const repo = detectRepo(dir);
-      if (knownRepos(registry).includes(repo.id)) clones.push(repo);
-    } catch {
-      /* repo without remote: not ours */
-    }
+  for (const repo of findProjects(config.workspaces)) {
+    if (knownRepos(registry).includes(repo.id)) clones.push(repo);
   }
   const seen = new Set(clones.map((c) => c.id));
   return { clones, notCloned: knownRepos(registry).filter((id) => !seen.has(id)) };
@@ -178,7 +176,7 @@ program
     const { config, root } = context(cmd);
     const { registry, warnings } = loadValidRegistry(root);
     printWarnings(warnings);
-    if (!opts.all) return runSync(registry, [detectRepo(process.cwd())], config, opts);
+    if (!opts.all) return runSync(registry, [here()], config, opts);
     const { clones, notCloned } = localClones(registry, config);
     runSync(registry, clones, config, opts);
     if (notCloned.length) console.log(`\nnot cloned under workspaces: ${notCloned.join(', ')}`);
@@ -191,7 +189,7 @@ program
   .action((opts: { all?: boolean }, cmd: Command) => {
     const { config, root } = context(cmd);
     const { registry } = loadValidRegistry(root);
-    const repos = opts.all ? localClones(registry, config).clones : [detectRepo(process.cwd())];
+    const repos = opts.all ? localClones(registry, config).clones : [here()];
     const state = State.load(stateDir());
     const label = {
       ok: 'up to date',
@@ -214,10 +212,10 @@ program
   });
 
 function targetRepo(repoFlag: string | undefined): { repo: RepoContext; isCwd: boolean } {
-  if (!repoFlag) return { repo: detectRepo(process.cwd()), isCwd: true };
+  if (!repoFlag) return { repo: here(), isCwd: true };
   const id = normalizeRepoId(repoFlag);
   try {
-    const cwd = detectRepo(process.cwd());
+    const cwd = here();
     if (cwd.id === id) return { repo: cwd, isCwd: true };
   } catch {
     /* not in a repo */
@@ -372,7 +370,8 @@ program
 program
   .command('import')
   .description('Import hand-written .mcp.json / .cursor/mcp.json into the registry (current repository, or --all)')
-  .option('--all', 'scan the configured workspaces and import every repository with a hand-written MCP config')
+  .option('--all', 'scan the configured workspaces and import every project with a hand-written MCP config')
+  .option('--dir <folders...>', 'scan these folders instead (implies --all; each is added to your workspaces)')
   .option('--repo-only', "import as each repository's own servers (repos/<repo>/) instead of shared ones")
   .option('--sync', 'then replace the hand-written files with generated ones (a .bak is kept)')
   .option('--dry-run', 'show what would be imported without writing')
@@ -383,18 +382,33 @@ A server name that already exists with the same definition is reused. A differen
 replaces the shared one when no repository uses it yet; otherwise it is kept as that repository's
 own server, so no repository silently switches to another one's configuration.`,
   )
-  .action((opts: { all?: boolean; dryRun?: boolean; repoOnly?: boolean; sync?: boolean }, cmd: Command) => {
+  .action((opts: { all?: boolean; dir?: string[]; dryRun?: boolean; repoOnly?: boolean; sync?: boolean }, cmd: Command) => {
     const { config, root } = context(cmd);
+    let scan = config.workspaces;
+    if (opts.dir) {
+      opts.all = true;
+      scan = opts.dir.map((d) => resolve(expandHome(d)));
+      for (const d of scan) {
+        if (!existsSync(d)) throw new LoadoutError(`${d} does not exist`);
+        // A folder inside an existing workspace is only scanned: adding it would change the ids of its projects.
+        if (!opts.dryRun && !workspaceOf(d, config.workspaces)) {
+          config.workspaces.push(d);
+          saveConfig(config);
+          console.log(`added workspace: ${d}`);
+        }
+      }
+    }
     const { registry } = loadValidRegistry(root);
     const state = State.load(stateDir());
     let repos: RepoContext[];
     if (opts.all) {
-      if (!config.workspaces.length)
-        throw new LoadoutError('No workspaces configured. Run: loadout init --workspace <dir-with-your-repos>');
-      repos = findImportCandidates(registry, config.workspaces, state).map((c) => c.repo);
-      if (!repos.length) return console.log(`No hand-written MCP configs found under ${config.workspaces.join(', ')}`);
+      if (!scan.length)
+        throw new LoadoutError('No workspaces configured. Pass --dir <folder>, or run: loadout init --workspace <dir>');
+      const idBase = [...new Set([...config.workspaces, ...scan])];
+      repos = findImportCandidates(registry, scan, state, idBase).map((c) => c.repo);
+      if (!repos.length) return console.log(`No hand-written MCP configs found under ${scan.join(', ')}`);
     } else {
-      repos = [detectRepo(process.cwd())];
+      repos = [here()];
     }
     const session = new ImportSession(registry, { dryRun: opts.dryRun, state });
     const imported: RepoContext[] = [];
@@ -492,7 +506,7 @@ Examples:
     }
     let root: string | undefined; // absolute paths inside the current repo become {{ repo.root }}
     try {
-      root = detectRepo(process.cwd()).root;
+      root = here().root;
     } catch {
       /* not in a repository */
     }
@@ -534,7 +548,7 @@ program
     let repo = opts.repo ? normalizeRepoId(opts.repo) : undefined;
     if (!repo && !registry.servers.has(name)) {
       try {
-        const cwd = detectRepo(process.cwd()).id;
+        const cwd = here().id;
         if (registry.repoServers.get(cwd)?.has(name)) repo = cwd;
       } catch {
         /* not in a repository */

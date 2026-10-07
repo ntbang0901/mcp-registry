@@ -20,20 +20,33 @@ Thiết kế và lý do: [`docs/architecture-brainstorm.md`](docs/architecture-b
 Cần Node.js ≥ 20. Project viết bằng TypeScript; chỉ cần `uvx` nếu bạn dùng server chạy bằng Python (ví dụ code-graph).
 
 ```bash
-git clone https://github.com/ntbang0901/mcp-registry ~/code/mcp-registry
-cd ~/code/mcp-registry
-npm install && npm run build && npm link      # cài lệnh `loadout`
+# 1. Cài lệnh `loadout` — bản đã build sẵn từ GitHub Release, không cần clone hay build
+npm install -g https://github.com/ntbang0901/mcp-registry/releases/latest/download/mcp-loadout.tgz
 
-loadout init --registry ~/code/mcp-registry --workspace ~/code
+# 2. Lấy dữ liệu registry về máy (tự clone vào ~/.local/share/loadout/registry) và cấu hình
+loadout init --from https://github.com/ntbang0901/mcp-registry.git --workspace ~/code
 ```
+
+Dữ liệu registry (`servers/`, `repos/`, `bindings.yaml`) vẫn là một bản git trên máy, vì UI và CLI sửa các file đó và bạn commit/push để chia sẻ. `init --from` chỉ làm hộ bước clone.
+
+Cách khác: `npm install -g github:ntbang0901/mcp-registry` (npm tự clone và build từ nhánh mặc định), hoặc clone rồi `npm install && npm link` khi muốn sửa code của chính công cụ.
 
 `init` ghi `~/.config/loadout/config.yaml`:
 
 ```yaml
-registry: /home/me/code/mcp-registry
+registry: /home/me/.local/share/loadout/registry
 workspaces: [/home/me/code]        # nơi `sync --all` và UI đi tìm repo
 targets: [claude-code, cursor]     # client cần sinh config
 ```
+
+### Phát hành bản mới của công cụ
+
+```bash
+npm version patch          # hoặc minor / major: tăng version, tạo commit + tag vX.Y.Z
+git push --follow-tags     # CI (release.yml) kiểm tra, build, đóng gói và tạo GitHub Release
+```
+
+Link `releases/latest/download/mcp-loadout.tgz` luôn trỏ tới bản mới nhất; cài lại bằng đúng lệnh ở bước 1 để cập nhật.
 
 ### Chuyển một repo đang có config MCP viết tay
 
@@ -45,10 +58,10 @@ git rm --cached .mcp.json .cursor/mcp.json      # nếu trước đây đã comm
 git commit -m "Move MCP config to the registry"
 export LINKUP_API_KEY=…                         # các biến `import` báo cần export (đặt trong ~/.zshrc hoặc ~/.bashrc)
 
-cd ~/code/mcp-registry && git add -A && git commit -m "Import my-api" && git push
+cd ~/.local/share/loadout/registry && git add -A && git commit -m "Import my-api" && git push
 ```
 
-Sau đó mở `loadout ui` để quản lý tiếp. Trên máy khác: clone registry, `npm install && npm run build && npm link`, `loadout init`, rồi `loadout sync --all`.
+Sau đó mở `loadout ui` để quản lý tiếp (nút **Commit** trên UI làm hộ phần commit; push vẫn dùng git). Trên máy khác: chạy lại 2 lệnh cài đặt ở trên, rồi `loadout sync --all`.
 
 ## Giao diện web
 

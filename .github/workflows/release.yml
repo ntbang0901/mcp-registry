@@ -1,0 +1,36 @@
+name: release
+
+# Push a tag like v0.2.0 (matching package.json "version") to publish the CLI:
+#   npm version minor && git push --follow-tags
+# Install: npm install -g https://github.com/ntbang0901/mcp-registry/releases/latest/download/mcp-loadout.tgz
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Tag matches package.json version
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: npm ci # also builds (prepare)
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run validate
+      - name: Pack
+        run: |
+          npm pack
+          mv mcp-loadout-*.tgz mcp-loadout.tgz
+          tar -tzf mcp-loadout.tgz | sort
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" mcp-loadout.tgz --title "$GITHUB_REF_NAME" --generate-notes

@@ -25,6 +25,12 @@ export function configPath(): string {
   return join(base, 'loadout', 'config.yaml');
 }
 
+/** Default place for a registry cloned by `loadout init --from`. */
+export function defaultRegistryDir(): string {
+  const base = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share');
+  return join(base, 'loadout', 'registry');
+}
+
 export function stateDir(): string {
   if (process.env.LOADOUT_STATE_DIR) return resolve(process.env.LOADOUT_STATE_DIR);
   const base = process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state');

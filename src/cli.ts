@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { Command } from 'commander';
 import { commitAdd, entryFromForm, makeRepoOnly, parsePairs, parseServerJson, previewAdd, removeServer, shareServer, type AddEntry } from './add.js';
 import { attachServers, BINDINGS_HEADER, detachServers } from './bindings-edit.js';
-import { expandHome, loadConfig, parseTargets, resolveRegistryRoot, saveConfig, stateDir, type Config } from './config.js';
+import { defaultRegistryDir, expandHome, loadConfig, parseTargets, resolveRegistryRoot, saveConfig, stateDir, type Config } from './config.js';
 import { LoadoutError } from './errors.js';
 import { importRepo } from './importer.js';
 import { BINDINGS_FILE, formatProblems, knownRepos, loadRegistry, loadValidRegistry, SERVERS_DIR, type Registry } from './registry.js';
@@ -16,6 +16,8 @@ import { requiredParams, updateBindingParams } from './params.js';
 import { startUi } from './ui-server.js';
 import { State } from './writer.js';
 
+const VERSION: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+
 interface GlobalOpts {
   registry?: string;
 }
@@ -24,7 +26,7 @@ const program = new Command();
 program
   .name('loadout')
   .description('Define MCP servers once, map them to repositories, render client configs.')
-  .version('0.1.0')
+  .version(VERSION)
   .option('--registry <path>', 'registry path (default: $LOADOUT_REGISTRY or config file)');
 
 function context(cmd: Command) {
@@ -90,14 +92,37 @@ function runSync(registry: Registry, repos: RepoContext[], config: Config, opts:
 
 program
   .command('init')
-  .description('Write the user config (registry path, workspaces, targets); scaffold the registry if empty')
+  .description('Write the user config (registry path, workspaces, targets); clone or scaffold the registry')
+  .option('--from <git-url>', 'clone the registry from this git URL first (default location: ~/.local/share/loadout/registry)')
   .option('--workspace <dir...>', 'directories containing your repositories (for sync --all)')
   .option('--targets <list>', 'comma-separated clients: claude-code,cursor')
-  .action((opts: { workspace?: string[]; targets?: string }, cmd: Command) => {
+  .addHelpText(
+    'after',
+    `
+Examples:
+  loadout init --from https://github.com/ntbang0901/mcp-registry.git --workspace ~/code
+  loadout init --registry ~/code/mcp-registry --workspace ~/code      # registry already cloned`,
+  )
+  .action((opts: { from?: string; workspace?: string[]; targets?: string }, cmd: Command) => {
     const config = loadConfig();
     const flag = (cmd.optsWithGlobals() as GlobalOpts).registry;
     if (flag) config.registry = resolve(expandHome(flag));
-    if (!config.registry) throw new LoadoutError('Pass --registry <path> (a clone of your registry repository)');
+    if (opts.from) {
+      const target = flag ? config.registry! : (config.registry ?? defaultRegistryDir());
+      if (existsSync(join(target, '.git'))) {
+        console.log(`registry already cloned at ${target}`);
+      } else {
+        if (existsSync(target) && readdirSync(target).length) throw new LoadoutError(`${target} exists and is not empty`);
+        mkdirSync(dirname(target), { recursive: true });
+        try {
+          execFileSync('git', ['clone', opts.from, target], { stdio: 'inherit' });
+        } catch {
+          throw new LoadoutError(`git clone ${opts.from} failed`);
+        }
+      }
+      config.registry = target;
+    }
+    if (!config.registry) throw new LoadoutError('Pass --from <git-url> to clone your registry, or --registry <path> to an existing clone');
     if (opts.workspace) config.workspaces = opts.workspace.map((w) => resolve(expandHome(w)));
     if (opts.targets) config.targets = parseTargets(opts.targets, '--targets');
     if (!existsSync(join(config.registry, SERVERS_DIR))) {

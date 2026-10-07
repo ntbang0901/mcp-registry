@@ -36,12 +36,12 @@ describe('ui server', () => {
       method: 'POST',
       body: JSON.stringify({ mode: 'json', text: '{"mcpServers":{"ctx":{"url":"https://c/mcp?token=abc"}}}', attach: ['https://github.com/acme/app.git'] }),
     });
-    expect(await add.json()).toEqual({ written: ['ctx'], attached: ['https://github.com/acme/app.git'] });
+    expect(await add.json()).toEqual({ written: ['ctx'], attached: ['github.com/acme/app'], needsParams: [] });
     expect(readFileSync(join(root, 'servers/ctx.yaml'), 'utf8')).not.toContain('abc');
     expect(readFileSync(join(root, 'bindings.yaml'), 'utf8')).toContain('github.com/acme/app: [ctx]');
 
     const state = await (await call('/api/state')).json();
-    expect(state.repos).toEqual([{ id: 'github.com/acme/app', servers: ['ctx'], own: [], params: { ctx: {} }, clones: [] }]);
+    expect(state.repos).toEqual([{ id: 'github.com/acme/app', servers: ['ctx'], own: [], params: { ctx: {} }, clones: [], env: [{ name: 'CTX_TOKEN', set: false }] }]);
 
     const dup = await call('/api/servers', { method: 'POST', body: JSON.stringify({ mode: 'form', form: { name: 'ctx', kind: 'remote', url: 'https://x' } }) });
     expect(dup.status).toBe(400);
@@ -55,6 +55,8 @@ describe('ui server', () => {
   it('sets per-repository params and edits server definitions', async () => {
     write(root, 'servers/pg.yaml', 'name: pg\ntransport: { type: http, url: "https://pg/{{ params.db }}" }\nparams:\n  db: { type: string, required: true }\n');
     const post = (path: string, body: unknown) => call(path, { method: 'POST', body: JSON.stringify(body) });
+    const direct = await post('/api/bindings', { repo: 'github.com/acme/app', server: 'pg', attached: true });
+    expect((await direct.json()).error).toMatch(/needs values for db/);
     const missing = await post('/api/params', { repo: 'github.com/acme/app', server: 'pg', params: {}, attach: true });
     expect(missing.status).toBe(400);
     expect((await missing.json()).error).toMatch(/requires param "db"/);
@@ -74,7 +76,7 @@ describe('ui server', () => {
 
   it('adds, shares and deletes repository-only servers', async () => {
     const body = { mode: 'form', repo: 'git@github.com:acme/svc.git', form: { name: 'db', kind: 'command', command: 'node tools/db.js' } };
-    expect(await (await call('/api/servers', { method: 'POST', body: JSON.stringify(body) })).json()).toEqual({ written: ['db'], attached: ['github.com/acme/svc'] });
+    expect(await (await call('/api/servers', { method: 'POST', body: JSON.stringify(body) })).json()).toEqual({ written: ['db'], attached: ['github.com/acme/svc'], needsParams: [] });
     let state = await (await call('/api/state')).json();
     expect(state.repoOnly.map((s: { name: string; repo: string }) => `${s.repo}/${s.name}`)).toEqual(['github.com/acme/svc/db']);
     expect(state.repos.find((r: { id: string }) => r.id === 'github.com/acme/svc').own).toEqual(['db']);

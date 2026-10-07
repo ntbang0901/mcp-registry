@@ -3,143 +3,290 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>loadout · MCP registry</title>
+<title>loadout</title>
 <style>
+  /* Layout: a fixed sidebar (repositories, servers) beside one working pane; new servers open in a side drawer. */
   :root {
-    --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f1f3f6; --border: #e1e4ea;
-    --text: #1b1f27; --muted: #667085; --accent: #3b5bdb; --accent-text: #ffffff;
-    --ok: #2b8a3e; --ok-bg: #e6f4ea; --warn: #b26a00; --warn-bg: #fff4e0;
-    --err: #c92a2a; --err-bg: #fdecec; --code-bg: #f4f5f8;
-    --radius: 10px; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --bg: #f2f3f5;
+    --panel: #ffffff;
+    --sunken: #f6f7f9;
+    --line: #e1e4e9;
+    --line-strong: #cdd2da;
+    --ink: #151920;
+    --ink-2: #565e6c;
+    --ink-3: #8a919e;
+    --accent: #0a7a73;
+    --accent-ink: #ffffff;
+    --accent-soft: #e2f2f0;
+    --ok: #1d8348;
+    --ok-soft: #e4f3ea;
+    --warn: #a2620b;
+    --warn-soft: #fbf0dc;
+    --bad: #c4372c;
+    --bad-soft: #fbe8e6;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --side: 272px;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1115; --surface: #171a21; --surface-2: #1e222b; --border: #2a2f3a;
-      --text: #e6e8ee; --muted: #8b93a7; --accent: #6d8cff; --accent-text: #0f1115;
-      --ok: #69db7c; --ok-bg: #16301e; --warn: #ffc078; --warn-bg: #33270f;
-      --err: #ff8787; --err-bg: #3a1a1a; --code-bg: #12151b;
+    :root:not([data-theme="light"]) {
+      --bg: #0e1115; --panel: #151920; --sunken: #1a1f27; --line: #262c36; --line-strong: #353d4a;
+      --ink: #e8ebf0; --ink-2: #a2aab8; --ink-3: #6f7887;
+      --accent: #3ec4b9; --accent-ink: #042220; --accent-soft: #10302d;
+      --ok: #52c682; --ok-soft: #10291b; --warn: #e6a74c; --warn-soft: #2d220f; --bad: #f07067; --bad-soft: #321715;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+      color-scheme: dark;
     }
   }
+  :root[data-theme="dark"] {
+    --bg: #0e1115; --panel: #151920; --sunken: #1a1f27; --line: #262c36; --line-strong: #353d4a;
+    --ink: #e8ebf0; --ink-2: #a2aab8; --ink-3: #6f7887;
+    --accent: #3ec4b9; --accent-ink: #042220; --accent-soft: #10302d;
+    --ok: #52c682; --ok-soft: #10291b; --warn: #e6a74c; --warn-soft: #2d220f; --bad: #f07067; --bad-soft: #321715;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+    color-scheme: dark;
+  }
+
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 24px; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
-  .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-  .brand b { font-size: 16px; }
-  .brand .path { color: var(--muted); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  main { max-width: 1180px; margin: 0 auto; padding: 20px 24px 60px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
-  .card h2 { font-size: 15px; margin: 0 0 12px; }
-  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .hint, .muted { color: var(--muted); font-size: 12px; font-weight: normal; }
-  label { display: grid; gap: 4px; font-weight: 500; margin-bottom: 10px; }
-  input[type=text], input:not([type]), textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
-  textarea { font-family: var(--mono); font-size: 12.5px; resize: vertical; }
-  #paste-text { min-height: 180px; }
-  input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); border-color: var(--accent); }
-  .btn { padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 500; cursor: pointer; white-space: nowrap; }
-  .btn:hover:not(:disabled) { border-color: var(--accent); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-  .btn.small { padding: 3px 9px; font-size: 12px; }
-  .btn.danger:hover:not(:disabled) { border-color: var(--err); color: var(--err); }
-  .btn:disabled { opacity: .5; cursor: not-allowed; }
-  .tabs { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 3px; margin-bottom: 12px; }
-  .tabs button { border: 0; background: transparent; color: var(--muted); padding: 5px 14px; border-radius: 6px; font: inherit; cursor: pointer; }
-  .tabs button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); font-weight: 600; }
-  .add-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
-  @media (max-width: 860px) { .add-grid { grid-template-columns: 1fr; } }
-  .seg { display: flex; gap: 16px; margin-bottom: 10px; }
-  .seg label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
-  .preview { background: var(--surface-2); border-radius: 8px; padding: 12px; min-height: 120px; }
-  .preview .file { margin-bottom: 12px; }
-  .preview .file-head { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; margin-bottom: 6px; }
-  pre { margin: 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font: 12px/1.45 var(--mono); overflow-x: auto; }
-  .msg { font-size: 12.5px; padding: 6px 9px; border-radius: 6px; margin-top: 6px; }
-  .msg.error { background: var(--err-bg); color: var(--err); }
-  .msg.warning, .msg.note { background: var(--warn-bg); color: var(--warn); }
-  .pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
-  .pill.ok { background: var(--ok-bg); color: var(--ok); }
-  .pill.warn { background: var(--warn-bg); color: var(--warn); }
-  .pill.err { background: var(--err-bg); color: var(--err); }
-  .pill.accent { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
-  .chip { display: inline-block; font-family: var(--mono); font-size: 11.5px; padding: 1px 7px; border-radius: 5px; background: var(--warn-bg); color: var(--warn); margin: 2px 4px 2px 0; }
-  .scope { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-  .scope label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
-  .scope select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: 12.5px var(--mono); max-width: 100%; }
-  .own-chip { display: inline-block; font-family: var(--mono); font-size: 11.5px; padding: 1px 7px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--border); margin: 2px 4px 2px 0; }
-  .cell { display: inline-flex; align-items: center; gap: 6px; }
-  .gear { border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); border-radius: 6px; font: 600 11px/18px system-ui, sans-serif; padding: 0 6px; cursor: pointer; white-space: nowrap; }
-  .gear.set { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
-  .gear.missing { color: var(--err); border-color: var(--err); background: var(--err-bg); }
-  dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); padding: 0; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
-  dialog::backdrop { background: rgba(0, 0, 0, .45); }
-  .dlg { padding: 18px 20px; }
-  .dlg h3 { margin: 0 0 14px; font-size: 15px; overflow-wrap: anywhere; }
-  .dlg label { margin-bottom: 14px; }
-  .dlg label > span:first-child { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .dlg select { padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
-  textarea.source { min-height: 340px; }
-  code { font-family: var(--mono); font-size: 12.5px; }
-  .group-head { margin: 18px 0 2px; font-size: 13px; color: var(--muted); font-weight: 600; }
-  .group-head .repo { font-family: var(--mono); }
-  .attach { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-  .attach label { overflow-wrap: anywhere; display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; font-family: var(--mono); font-size: 12.5px; }
-  .row-end { display: flex; justify-content: flex-end; align-items: center; gap: 14px; margin-top: 14px; }
-  .row-end label { display: flex; align-items: center; gap: 6px; margin: 0; font-weight: normal; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+  .mono, code, pre, textarea.code { font-family: var(--mono); }
+  code { font-size: 12.5px; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  a { color: inherit; }
+
+  /* ---------- shell ---------- */
+  .app { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); height: 100%; }
+  .side { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 4px; font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+  .brand .mark { width: 18px; height: 18px; border-radius: 5px; background: var(--accent); position: relative; }
+  .brand .mark::after { content: ""; position: absolute; inset: 5px; border-radius: 2px; background: var(--panel); }
+  .registry { padding: 0 18px 14px; color: var(--ink-3); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  nav { flex: 1; overflow-y: auto; padding: 4px 10px 12px; display: grid; gap: 16px; align-content: start; }
+  .nav-label { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+  .nav-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 8px; border-radius: 7px; border: 0; background: none; text-align: left; cursor: pointer; text-decoration: none; color: var(--ink); min-width: 0; }
+  .nav-item:hover { background: var(--sunken); }
+  .nav-item.active { background: var(--accent-soft); }
+  .nav-item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav-item .sub { color: var(--ink-3); font-size: 12px; }
+  .nav-item .count { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .nav-empty { padding: 4px 8px; color: var(--ink-3); font-size: 12.5px; }
+  .icon-btn { border: 0; background: none; color: var(--ink-3); cursor: pointer; width: 22px; height: 22px; border-radius: 6px; font-size: 16px; line-height: 1; display: grid; place-items: center; }
+  .icon-btn:hover { background: var(--sunken); color: var(--ink); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--ink-3); }
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.bad { background: var(--bad); }
+  .dot.none { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+  .side-foot { border-top: 1px solid var(--line); padding: 12px; display: grid; gap: 10px; }
+  .changes { background: var(--sunken); border: 1px solid var(--line); border-radius: 9px; padding: 10px; display: grid; gap: 8px; font-size: 12.5px; }
+  .changes .files { color: var(--ink-3); font-family: var(--mono); font-size: 11px; max-height: 72px; overflow: auto; }
+  .add-repo-form { display: grid; gap: 6px; padding: 4px 8px 8px; }
+
+  main { overflow-y: auto; min-width: 0; }
+  .page { max-width: 920px; margin: 0 auto; padding: 28px 32px 64px; display: grid; gap: 24px; }
+  .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .page-head > :first-child { min-width: 0; flex: 1 1 320px; }
+  .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 4px; }
+  h1 { margin: 0; font-size: 22px; line-height: 1.25; letter-spacing: -.015em; font-weight: 650; text-wrap: balance; overflow-wrap: anywhere; }
+  h1 .host { color: var(--ink-3); font-weight: 450; }
+  h2 { margin: 0; font-size: 13px; font-weight: 650; }
+  .meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; color: var(--ink-2); font-size: 12.5px; }
+  .meta .path { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .section { display: grid; gap: 10px; }
+  .section-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .section-head .push { margin-left: auto; }
+  .hint { color: var(--ink-3); font-size: 12.5px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  .list > * + * { border-top: 1px solid var(--line); }
+
+  /* ---------- controls ---------- */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); font-weight: 550; font-size: 13px; cursor: pointer; white-space: nowrap; text-decoration: none; }
+  .btn:hover:not(:disabled) { border-color: var(--ink-3); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.06); border-color: var(--accent); }
+  .btn.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+  .btn.ghost:hover:not(:disabled) { background: var(--sunken); border-color: transparent; color: var(--ink); }
+  .btn.danger:hover:not(:disabled), .btn.danger.armed { color: var(--bad); }
+  .btn.danger.armed { background: var(--bad-soft); }
+  .btn.sm { padding: 3px 9px; font-size: 12.5px; }
+  .btn.block { width: 100%; justify-content: center; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  input[type=text], input[type=number], input:not([type]), textarea, select {
+    width: 100%; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13.5px;
+  }
+  input[aria-invalid=true] { border-color: var(--bad); }
+  textarea { resize: vertical; }
+  textarea.code { font-size: 12.5px; line-height: 1.5; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  input[type=checkbox], input[type=radio] { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
+  .field { display: grid; gap: 5px; min-width: 0; align-content: start; }
+  .field-label { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); flex-wrap: wrap; }
+  .field-label code { color: var(--ink); font-weight: 600; }
+  .field .hint { font-size: 12px; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--sunken); color: var(--ink-2); border: 1px solid var(--line); white-space: nowrap; }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .pill.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .tag { font-size: 11px; font-weight: 500; color: var(--ink-3); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; padding: 3px 9px; border-radius: 7px; background: var(--panel); border: 1px solid var(--line); }
+  .chip .mark { font-family: var(--font); font-weight: 700; }
+  .chip.ok .mark { color: var(--ok); }
+  .chip.bad { border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+  .chip.bad .mark { color: var(--bad); }
+  .msg { font-size: 12.5px; padding: 8px 10px; border-radius: 8px; overflow-wrap: anywhere; }
+  .msg.error { background: var(--bad-soft); color: var(--bad); white-space: pre-line; }
+  .msg.warn { background: var(--warn-soft); color: var(--warn); }
+  .msg.info { background: var(--sunken); color: var(--ink-2); border: 1px solid var(--line); }
+
+  /* ---------- server rows ---------- */
+  .srv { padding: 14px 16px; display: grid; gap: 12px; }
+  .srv-head { display: flex; align-items: flex-start; gap: 12px; }
+  .srv-icon { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; background: var(--sunken); border: 1px solid var(--line); color: var(--ink-2); font: 600 10.5px var(--mono); }
+  .srv-icon.remote { color: var(--accent); }
+  .srv-main { flex: 1; min-width: 0; }
+  .srv-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 650; }
+  .srv-name a { text-decoration: none; }
+  .srv-name a:hover { text-decoration: underline; }
+  .srv-sum { font-family: var(--mono); font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; margin-top: 2px; }
+  .srv-desc { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
+  .params { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px 14px; padding: 12px; background: var(--sunken); border-radius: 9px; border: 1px solid var(--line); margin-left: 42px; }
+  .params-foot { display: flex; align-items: center; gap: 8px; justify-content: flex-end; grid-column: 1 / -1; flex-wrap: wrap; }
+  .params-foot .msg { flex: 1; }
+  .more { grid-column: 1 / -1; }
+  .more summary { cursor: pointer; color: var(--ink-2); font-size: 12.5px; font-weight: 550; width: max-content; }
+  .more[open] summary { margin-bottom: 10px; }
+  .more .params-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px 14px; }
+  .more-inline { margin-left: 42px; }
+  .srv.pending { background: color-mix(in srgb, var(--accent-soft) 50%, var(--panel)); }
+  .srv.pending:first-child { border-radius: 12px 12px 0 0; }
+  .srv.pending:last-child { border-radius: 0 0 12px 12px; }
+
+  /* ---------- tables ---------- */
   .table-wrap { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
-  th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
-  th:first-child, td:first-child { text-align: left; }
-  td.repo { font-family: var(--mono); font-size: 12.5px; }
-  td.repo .clone { display: block; color: var(--muted); font-size: 11px; word-break: break-all; }
-  tr:hover td { background: var(--surface-2); }
-  input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
-  form.inline { display: flex; gap: 8px; margin-top: 14px; max-width: 560px; }
-  .unregistered { margin-top: 12px; font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-  .server { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
-  .server:last-child { border-bottom: 0; }
-  .server .name { font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .server .summary { font-family: var(--mono); font-size: 12px; color: var(--muted); word-break: break-all; }
-  .server .side { display: flex; align-items: center; gap: 10px; }
-  .banner { max-width: 1180px; margin: 16px auto 0; padding: 10px 16px; border-radius: var(--radius); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .banner.changes { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); }
-  .banner.error { background: var(--err-bg); color: var(--err); display: block; }
-  .banner input { flex: 1; min-width: 200px; }
-  .banner details { width: 100%; font-family: var(--mono); font-size: 12px; color: var(--muted); }
-  .sync-repo { padding: 10px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
-  .sync-repo:last-child { border-bottom: 0; }
-  .sync-repo .files { font-family: var(--mono); font-size: 12px; margin-top: 4px; display: grid; gap: 2px; }
-  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
-  #toast.show { opacity: 1; }
-  #toast.error { background: var(--err); color: #fff; }
-  .empty { color: var(--muted); padding: 8px 0; }
-  @media (max-width: 600px) { header.top, main { padding-left: 16px; padding-right: 16px; } .banner { margin-left: 16px; margin-right: 16px; } }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr.link { cursor: pointer; }
+  tbody tr.link:hover td { background: var(--sunken); }
+  td.center, th.center { text-align: center; }
+  .cell-on, .cell-off { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; }
+  .cell-on { background: var(--accent); }
+  .cell-on.cell-bad { background: var(--bad); }
+  .cell-off { box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+  .repo-cell { display: flex; align-items: center; gap: 9px; font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+
+  .rows .row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+  .rows .row .text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .empty-state { padding: 26px 16px; text-align: center; color: var(--ink-2); display: grid; gap: 12px; justify-items: center; }
+
+  .file { display: flex; align-items: center; gap: 10px; padding: 9px 14px; font-size: 13px; flex-wrap: wrap; text-decoration: none; }
+  .file .name { font-family: var(--mono); font-size: 12.5px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  a.file:hover { background: var(--sunken); }
+  .clone-head { padding: 10px 14px 4px; font-family: var(--mono); font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+
+  /* ---------- picker ---------- */
+  .picker { position: relative; }
+  .picker-menu { position: absolute; right: 0; top: calc(100% + 6px); width: min(340px, 86vw); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: 0 10px 30px rgba(16, 24, 40, .16); z-index: 20; padding: 6px; display: grid; gap: 2px; max-height: 360px; overflow-y: auto; text-align: left; }
+  .picker-item { display: grid; gap: 1px; text-align: left; padding: 8px 10px; border-radius: 7px; border: 0; background: none; cursor: pointer; }
+  .picker-item:hover, .picker-item:focus-visible { background: var(--sunken); }
+  .picker-item .top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .picker-item .sub { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .picker-sep { height: 1px; background: var(--line); margin: 4px 0; }
+
+  /* ---------- drawer ---------- */
+  .scrim { position: fixed; inset: 0; background: rgba(10, 14, 20, .38); z-index: 30; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(780px, 100vw); background: var(--panel); border-left: 1px solid var(--line); z-index: 31; display: flex; flex-direction: column; box-shadow: -12px 0 40px rgba(16, 24, 40, .18); }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+  .drawer-head h2 { font-size: 15px; }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 18px 20px; display: grid; gap: 18px; align-content: start; }
+  .drawer-foot { border-top: 1px solid var(--line); padding: 12px 20px; display: flex; align-items: center; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+  .drawer-foot .grow { flex: 1; }
+  .seg { display: inline-flex; background: var(--sunken); border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 2px; justify-self: start; }
+  .seg button { border: 0; background: none; padding: 5px 12px; border-radius: 6px; color: var(--ink-2); cursor: pointer; font-size: 13px; }
+  .seg button[aria-pressed=true] { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: var(--shadow); }
+  .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .preview { background: var(--sunken); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 10px; align-content: start; min-height: 220px; min-width: 0; }
+  .preview pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 10px; font-size: 12px; line-height: 1.5; overflow-x: auto; }
+  .preview-head { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; flex-wrap: wrap; }
+  .radio-row { display: flex; gap: 8px 18px; flex-wrap: wrap; align-items: center; }
+  .radio-row label { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; }
+  .check-list { display: grid; gap: 6px; }
+  .check-list label { display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 12.5px; cursor: pointer; overflow-wrap: anywhere; }
+
+  .def-table td:first-child { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+  .editor textarea { min-height: 340px; }
+
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 8px); background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 9px; font-size: 13px; opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 40; max-width: min(560px, 90vw); }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.error { background: var(--bad); color: #fff; }
+  @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+
+  @media (max-width: 860px) {
+    html, body { height: auto; }
+    .app { display: block; height: auto; }
+    .side { border-right: 0; border-bottom: 1px solid var(--line); }
+    nav { overflow: visible; }
+    main { overflow: visible; }
+    .page { padding: 20px 16px 48px; }
+    .two { grid-template-columns: 1fr; }
+    .params { margin-left: 0; }
+  }
 </style>
 </head>
 <body>
-<header class="top">
-  <div class="brand"><b>loadout</b><span class="path" id="registry-path"></span></div>
-  <button class="btn" id="sync-all" title="Re-render MCP configs in every local clone">Sync all repos</button>
-</header>
-<div id="problems" class="banner error" hidden></div>
-<div id="changes" class="banner changes" hidden></div>
-
-<main>
-  <section class="card">
-    <div class="card-head">
-      <h2>Add MCP server</h2>
-      <span class="hint">Paste the JSON from a server's README, or fill in the form. API keys are never stored — they become environment variables.</span>
-    </div>
-    <div class="tabs" role="tablist">
-      <button data-tab="paste" class="active">Paste JSON</button>
-      <button data-tab="form">Form</button>
-    </div>
-    <div class="add-grid">
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="mark" aria-hidden="true"></span>loadout</div>
+    <div class="registry" id="registry-path"></div>
+    <nav>
       <div>
-        <div data-pane="paste">
-          <label>MCP config
-            <textarea id="paste-text" spellcheck="false" placeholder='{
+        <a class="nav-item" href="#/" data-route="overview"><span class="label">Overview</span><span class="pill bad" id="attention-count" hidden></span></a>
+      </div>
+      <div>
+        <div class="nav-label">Repositories <button class="icon-btn" id="add-repo-btn" type="button" title="Add a repository" aria-label="Add a repository">+</button></div>
+        <form class="add-repo-form" id="add-repo-form" hidden>
+          <input id="add-repo-input" spellcheck="false" placeholder="github.com/owner/repo or git URL" aria-label="Repository">
+          <div class="actions"><button class="btn sm primary" type="submit">Add</button><button class="btn sm ghost" type="button" id="add-repo-cancel">Cancel</button></div>
+        </form>
+        <div id="repo-nav"></div>
+      </div>
+      <div>
+        <div class="nav-label">Servers <button class="icon-btn" id="new-server-btn" type="button" title="New server" aria-label="New server">+</button></div>
+        <div id="server-nav"></div>
+      </div>
+    </nav>
+    <div class="side-foot">
+      <div id="changes" hidden></div>
+      <button class="btn block" id="sync-all" type="button">Sync all repositories</button>
+    </div>
+  </aside>
+  <main id="main"><div class="page"><div class="hint">Loading…</div></div></main>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="New MCP server">
+  <div class="drawer-head">
+    <h2>New MCP server</h2>
+    <button class="icon-btn" id="drawer-close" type="button" aria-label="Close">×</button>
+  </div>
+  <div class="drawer-body">
+    <div class="seg" role="group" aria-label="Input">
+      <button type="button" data-tab="paste" aria-pressed="true">Paste JSON</button>
+      <button type="button" data-tab="form" aria-pressed="false">Fill in a form</button>
+    </div>
+    <div class="two">
+      <div class="section">
+        <div data-pane="paste" class="section">
+          <label class="field"><span class="field-label">Config from the server's README</span>
+            <textarea id="paste-text" class="code" rows="11" spellcheck="false" placeholder='{
   "mcpServers": {
     "linkup": {
       "type": "http",
@@ -148,73 +295,57 @@
   }
 }'></textarea>
           </label>
-          <label>Name <span class="hint">only needed if the JSON has no server name</span>
-            <input id="paste-name" placeholder="e.g. linkup">
-          </label>
+          <label class="field"><span class="field-label">Name <span class="hint">only if the JSON has none</span></span><input id="paste-name" placeholder="linkup"></label>
         </div>
-        <div data-pane="form" hidden>
-          <label>Name <input id="f-name" placeholder="e.g. context7"></label>
-          <div class="seg">
-            <label><input type="radio" name="kind" value="remote" checked> Remote (URL)</label>
-            <label><input type="radio" name="kind" value="command"> Local (command)</label>
+        <div data-pane="form" class="section" hidden>
+          <label class="field"><span class="field-label">Name</span><input id="f-name" placeholder="postgres"></label>
+          <div class="radio-row" role="radiogroup" aria-label="Kind">
+            <label><input type="radio" name="kind" value="remote" checked> Remote URL</label>
+            <label><input type="radio" name="kind" value="command"> Local command</label>
           </div>
-          <label id="f-url-l">URL <input id="f-url" placeholder="https://mcp.example.com/mcp"></label>
-          <label id="f-cmd-l" hidden>Command <input id="f-cmd" spellcheck="false" placeholder="npx -y @scope/server@1.2.3 --some-flag"></label>
-          <p class="hint">Values that differ per repository: write <code>{{ params.name }}</code> (e.g. <code>--database {{ params.database }}</code>), then fill them in per repository with ⚙.</p>
-          <label><span><span id="f-pairs-label">Headers</span> <span class="hint">KEY=value, one per line</span></span>
-            <textarea id="f-pairs" rows="3" spellcheck="false" placeholder="Authorization=Bearer YOUR_KEY"></textarea>
+          <label class="field" id="f-url-l"><span class="field-label">URL</span><input id="f-url" spellcheck="false" placeholder="https://mcp.example.com/mcp"></label>
+          <label class="field" id="f-cmd-l" hidden><span class="field-label">Command</span><input id="f-cmd" spellcheck="false" placeholder="npx -y @acme/pg-mcp@1.0.0 --database {{ params.database }}"></label>
+          <label class="field"><span class="field-label" id="f-pairs-label">Headers</span>
+            <textarea id="f-pairs" class="code" rows="3" spellcheck="false" placeholder="Authorization=Bearer YOUR_KEY"></textarea>
+            <span class="hint">One <code>KEY=value</code> per line. API keys become environment variables and are never stored.</span>
           </label>
+          <div class="msg info">For a value that differs per repository, write <code>{{ params.name }}</code>. You fill it in on each repository's page.</div>
         </div>
-        <label>Description <span class="hint">optional</span><input id="add-desc"></label>
+        <label class="field"><span class="field-label">Description <span class="hint">optional</span></span><input id="add-desc"></label>
       </div>
-      <div class="preview" id="preview"><div class="muted">The generated definition will appear here.</div></div>
+      <div class="preview" id="preview" aria-live="polite"><div class="hint">The definition that will be saved appears here as you type.</div></div>
     </div>
-    <div class="scope">
-      <label><input type="radio" name="scope" value="shared" checked> Shared <span class="hint">reusable by any repository</span></label>
-      <label><input type="radio" name="scope" value="repo"> Only for</label>
-      <select id="scope-repo" aria-label="Repository that owns the server"></select>
+    <div class="section">
+      <h2>Who uses it</h2>
+      <div class="radio-row" role="radiogroup" aria-label="Scope">
+        <label><input type="radio" name="scope" value="shared" checked> Shared <span class="hint">any repository can use it</span></label>
+        <label><input type="radio" name="scope" value="repo"> Only for</label>
+        <select id="scope-repo" aria-label="Repository" style="width:auto;max-width:100%"></select>
+      </div>
+      <div id="attach-block" class="section">
+        <span class="hint" id="attach-hint">Add it to these repositories now:</span>
+        <div class="check-list" id="attach-list"></div>
+      </div>
     </div>
-    <div class="attach" id="attach-row"><span class="hint">Attach to</span><span id="attach-list" class="muted">no repositories yet</span></div>
-    <div class="row-end">
-      <label id="overwrite-l" hidden><input type="checkbox" id="overwrite"> Replace existing definition</label>
-      <button class="btn primary" id="add-btn" disabled>Add server</button>
-    </div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <h2>Repositories</h2>
-      <span class="hint">Tick a box to attach a server; local clones are re-synced automatically.</span>
-    </div>
-    <div class="table-wrap"><table id="matrix"></table></div>
-    <form id="add-repo" class="inline">
-      <input id="repo-input" spellcheck="false" placeholder="github.com/owner/repo or a git URL">
-      <button class="btn">Add repository</button>
-    </form>
-    <div id="unregistered" class="unregistered"></div>
-  </section>
-
-  <section class="card">
-    <h2>Servers</h2>
-    <div id="servers"></div>
-  </section>
-
-  <section class="card" id="sync-card" hidden>
-    <div class="card-head"><h2>Last sync</h2><button class="btn small" id="sync-close">Hide</button></div>
-    <div id="sync-results"></div>
-  </section>
-</main>
-<dialog id="dlg"></dialog>
-<div id="toast"></div>
+  </div>
+  <div class="drawer-foot">
+    <label class="grow radio-row" id="overwrite-l" hidden><input type="checkbox" id="overwrite"> Replace the existing definition</label>
+    <button class="btn ghost" type="button" id="drawer-cancel">Cancel</button>
+    <button class="btn primary" type="button" id="add-btn" disabled>Add server</button>
+  </div>
+</aside>
+<div id="toast" role="status"></div>
 
 <script>
 'use strict';
 const TOKEN = new URLSearchParams(location.search).get('token');
 const $ = (sel) => document.querySelector(sel);
 let state = null;
-let tab = 'paste';
-let lastPreviewOk = false;
+const drafts = new Map();   // "repo|server" -> { param: string }   unsaved param edits survive re-renders
+const pending = new Map();  // repo -> Set(server)                     servers being added that need values first
+let editing = null;         // { key, yaml, path } server definition being edited
 
+// ---------- utilities ----------
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -226,7 +357,7 @@ async function api(method, path, body) {
   return data;
 }
 
-/** Tiny DOM builder; strings become text nodes, so nothing is parsed as HTML. */
+/** Tiny DOM builder; strings become text nodes, nested arrays are flattened. */
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -236,7 +367,7 @@ function el(tag, attrs = {}, ...children) {
     else if (k in node && typeof v !== 'string') node[k] = v;
     else node.setAttribute(k, v === true ? '' : v);
   }
-  for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) node.append(c instanceof Node ? c : String(c));
+  for (const c of children.flat(4)) if (c !== null && c !== undefined && c !== false) node.append(c instanceof Node ? c : String(c));
   return node;
 }
 
@@ -246,274 +377,622 @@ function toast(text, isError = false) {
   t.textContent = text;
   t.className = 'show' + (isError ? ' error' : '');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.className = ''), isError ? 6000 : 3000);
+  toastTimer = setTimeout(() => (t.className = ''), isError ? 6000 : 2800);
 }
-
 async function guard(fn) {
   try { return await fn(); } catch (e) { toast(e.message, true); }
 }
 
+/** A button that asks for a second click before doing something destructive. */
+function confirmButton(label, armedLabel, onConfirm, title) {
+  const b = el('button', { class: 'btn sm ghost danger', type: 'button', title }, label);
+  let timer;
+  b.addEventListener('click', () => {
+    if (!b.classList.contains('armed')) {
+      b.classList.add('armed');
+      b.textContent = armedLabel;
+      timer = setTimeout(() => { b.classList.remove('armed'); b.textContent = label; }, 3500);
+      return;
+    }
+    clearTimeout(timer);
+    onConfirm();
+  });
+  return b;
+}
+
+const splitId = (id) => {
+  const parts = id.split('/');
+  return { host: parts[0], slug: parts.slice(1).join('/') };
+};
+const repoHref = (id) => `#/repo/${id}`;
+const serverHref = (name, repo) => (repo ? `#/own/${repo}/${name}` : `#/server/${name}`);
+const serverSpec = (name) => state.servers.find((s) => s.name === name);
+const repoById = (id) => state.repos.find((r) => r.id === id);
+const hasErrors = () => state.problems.some((p) => p.level === 'error');
+const requiredOf = (spec) => spec.params.filter((p) => p.required && p.default === undefined).map((p) => p.name);
+
+function missingParams(repo, name) {
+  const spec = serverSpec(name);
+  const values = repo.params[name] || {};
+  return spec ? requiredOf(spec).filter((p) => values[p] === undefined) : [];
+}
+
+/** [ok | warn | bad | none, label] for a repository. */
+function repoHealth(repo) {
+  if (hasErrors()) return ['bad', 'Registry has errors'];
+  if (repo.servers.some((s) => missingParams(repo, s).length)) return ['bad', 'Missing values'];
+  if (!repo.clones.length) return ['none', 'Not cloned here'];
+  const st = repo.clones.map((c) => c.status);
+  if (st.includes('error')) return ['bad', 'Error'];
+  if (st.includes('hand-written')) return ['bad', 'Hand-written config'];
+  if (st.includes('out of sync')) return ['warn', 'Out of sync'];
+  return ['ok', 'Synced'];
+}
+
+const serverIcon = (s) => el('span', { class: `srv-icon ${s.kind}`, 'aria-hidden': 'true' }, s.kind === 'remote' ? 'URL' : '>_');
+
+// ---------- data + routing ----------
 async function refresh() {
   state = await api('GET', '/api/state');
   render();
 }
 
-// ---------- rendering ----------
+function route() {
+  const h = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
+  if (h.startsWith('repo/')) return { view: 'repo', id: h.slice(5) };
+  if (h.startsWith('server/')) return { view: 'server', name: h.slice(7) };
+  if (h.startsWith('own/')) {
+    const rest = h.slice(4);
+    const i = rest.lastIndexOf('/');
+    return { view: 'server', repo: rest.slice(0, i), name: rest.slice(i + 1) };
+  }
+  return { view: 'overview' };
+}
+
 function render() {
-  $('#registry-path').textContent = state.registryRoot;
-  renderProblems();
-  renderChanges();
-  renderMatrix();
-  renderServers();
-  renderAttachList();
+  if (!state) return;
+  // Re-rendering while someone types in the page would steal focus; refresh again on the next change instead.
+  const active = document.activeElement;
+  if (active && $('#main').contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) && render.soft) return;
+  const r = route();
+  renderSide(r);
+  const main = $('#main');
+  const scroll = main.scrollTop;
+  let page;
+  if (r.view === 'repo' && repoById(r.id)) page = repoPage(repoById(r.id));
+  else if (r.view === 'server') page = serverPage(r.name, r.repo);
+  else page = overviewPage();
+  main.replaceChildren(page);
+  main.scrollTop = scroll;
 }
 
-function renderProblems() {
-  const errors = state.problems.filter((p) => p.level === 'error');
-  const box = $('#problems');
-  box.hidden = !errors.length;
-  box.replaceChildren(
-    el('b', {}, 'Registry has errors — sync is disabled until they are fixed:'),
-    el('ul', {}, errors.map((p) => el('li', {}, `${p.file}: ${p.message}`))),
-  );
-}
+// ---------- sidebar ----------
+function renderSide(r) {
+  $('#registry-path').textContent = state.registryRoot.split('/').filter(Boolean).slice(-2).join('/').replace(/^/, '…/');
+  $('#registry-path').title = state.registryRoot;
+  for (const a of document.querySelectorAll('[data-route=overview]')) a.classList.toggle('active', r.view === 'overview');
+  const attention = attentionItems().length;
+  $('#attention-count').hidden = !attention;
+  $('#attention-count').textContent = attention;
 
-function renderChanges() {
+  $('#repo-nav').replaceChildren(...(state.repos.length ? state.repos.map((repo) => {
+    const [health, label] = repoHealth(repo);
+    return el('a', { class: `nav-item${r.view === 'repo' && r.id === repo.id ? ' active' : ''}`, href: repoHref(repo.id), title: `${repo.id} · ${label}` },
+      el('span', { class: `dot ${health}`, 'aria-label': label }),
+      el('span', { class: 'label' }, splitId(repo.id).slug),
+      el('span', { class: 'count', title: 'MCP servers' }, repo.servers.length + repo.own.length));
+  }) : [el('div', { class: 'nav-empty' }, 'No repositories yet.')]));
+
+  const servers = [...state.servers.map((s) => ({ ...s, repo: null })), ...state.repoOnly];
+  $('#server-nav').replaceChildren(...(servers.length ? servers.map((s) => {
+    const active = r.view === 'server' && r.name === s.name && (r.repo || null) === s.repo;
+    return el('a', { class: `nav-item${active ? ' active' : ''}`, href: serverHref(s.name, s.repo), title: s.repo ? `Only for ${s.repo}` : `Used by ${s.usedBy.length}` },
+      el('span', { class: 'label' }, s.name),
+      s.repo ? el('span', { class: 'sub' }, `only ${splitId(s.repo).slug.split('/').pop()}`) : el('span', { class: 'count', title: 'Repositories using it' }, s.usedBy.length));
+  }) : [el('div', { class: 'nav-empty' }, 'No servers yet.')]));
+
   const box = $('#changes');
   box.hidden = !state.changes.length;
-  if (!state.changes.length) return;
-  const msg = el('input', { placeholder: 'Commit message', value: 'Update MCP registry' });
-  box.replaceChildren(
-    el('span', {}, el('b', {}, `${state.changes.length} uncommitted change${state.changes.length > 1 ? 's' : ''}`), ' in the registry'),
-    msg,
-    el('button', { class: 'btn primary small', onclick: () => guard(async () => {
-      await api('POST', '/api/commit', { message: msg.value });
-      toast('Committed. Push the registry to share it.');
-      await refresh();
-    }) }, 'Commit'),
-    el('details', {}, el('summary', {}, 'files'), el('div', {}, state.changes.map((c) => el('div', {}, c)))),
+  if (state.changes.length) {
+    const msg = el('input', { value: 'Update MCP registry', 'aria-label': 'Commit message' });
+    const n = state.changes.length;
+    box.replaceChildren(el('div', { class: 'changes' },
+      el('div', {}, el('b', {}, `${n} uncommitted change${n > 1 ? 's' : ''}`), ' in the registry'),
+      el('div', { class: 'files' }, state.changes.map((c) => el('div', {}, c))),
+      msg,
+      el('button', { class: 'btn sm primary', type: 'button', onclick: () => guard(async () => {
+        await api('POST', '/api/commit', { message: msg.value });
+        toast('Committed. Push the registry to share it.');
+        await refresh();
+      }) }, 'Commit')));
+  }
+}
+
+// ---------- overview ----------
+function attentionItems() {
+  const items = [];
+  for (const p of state.problems.filter((x) => x.level === 'error')) items.push({ level: 'bad', text: `${p.file}: ${p.message}` });
+  for (const repo of state.repos) {
+    for (const s of repo.servers) {
+      const m = missingParams(repo, s);
+      if (m.length) items.push({ level: 'bad', text: `${repo.id} needs values for ${s}: ${m.join(', ')}`, href: repoHref(repo.id) });
+    }
+    for (const c of repo.clones) {
+      if (c.status === 'hand-written') items.push({ level: 'bad', text: `${repo.id} has hand-written MCP config files`, href: repoHref(repo.id) });
+      else if (c.status === 'out of sync') items.push({ level: 'warn', text: `${repo.id} is out of sync`, href: repoHref(repo.id), action: ['Sync', () => sync(repo.id)] });
+      else if (c.status === 'error' && !hasErrors()) items.push({ level: 'bad', text: `${repo.id}: ${c.error}`, href: repoHref(repo.id) });
+    }
+  }
+  return items;
+}
+
+function overviewPage() {
+  const items = attentionItems();
+  const servers = state.servers.map((s) => s.name);
+  const missingEnv = [...new Set(state.repos.flatMap((r) => r.env.filter((e) => !e.set).map((e) => e.name)))];
+  return el('div', { class: 'page' },
+    el('div', { class: 'page-head' },
+      el('div', {}, el('div', { class: 'eyebrow' }, 'Registry'), el('h1', {}, 'Overview'),
+        el('div', { class: 'meta' },
+          el('span', {}, `${state.repos.length} ${state.repos.length === 1 ? 'repository' : 'repositories'}`),
+          el('span', {}, `${state.servers.length} shared ${state.servers.length === 1 ? 'server' : 'servers'}`),
+          state.repoOnly.length ? el('span', {}, `${state.repoOnly.length} repository-only`) : null)),
+      el('div', { class: 'actions' }, el('button', { class: 'btn primary', type: 'button', onclick: () => openDrawer() }, 'New server'))),
+
+    el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, 'Needs attention')),
+      el('div', { class: 'panel rows list' }, items.length
+        ? items.map((it) => el('div', { class: 'row' },
+            el('span', { class: `dot ${it.level}` }),
+            el('span', { class: 'text' }, it.text),
+            it.action ? el('button', { class: 'btn sm', type: 'button', onclick: it.action[1] }, it.action[0]) : null,
+            it.href ? el('a', { class: 'btn sm ghost', href: it.href }, 'Open') : null))
+        : el('div', { class: 'row' }, el('span', { class: 'dot ok' }), el('span', { class: 'text' }, 'Everything is in sync.')))),
+
+    missingEnv.length ? el('div', { class: 'msg warn' }, 'Not set in the shell running loadout ui: ', missingEnv.join(', ')) : null,
+
+    el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, 'Repositories and shared servers'), el('span', { class: 'hint push' }, 'Click a row to manage it')),
+      state.repos.length && servers.length
+        ? el('div', { class: 'panel table-wrap' }, el('table', {},
+            el('thead', {}, el('tr', {}, el('th', {}, 'Repository'), servers.map((s) => el('th', { class: 'center' }, s)), el('th', { class: 'center', title: 'Repository-only servers' }, 'Own'))),
+            el('tbody', {}, state.repos.map((repo) => {
+              const [health, label] = repoHealth(repo);
+              return el('tr', { class: 'link', onclick: () => (location.hash = repoHref(repo.id)) },
+                el('td', {}, el('span', { class: 'repo-cell' }, el('span', { class: `dot ${health}`, title: label }), splitId(repo.id).slug)),
+                servers.map((s) => {
+                  const on = repo.servers.includes(s);
+                  const bad = on && missingParams(repo, s).length;
+                  return el('td', { class: 'center', title: on ? (bad ? `${s}: missing values` : `${s} is on`) : '' },
+                    el('span', { class: on ? `cell-on${bad ? ' cell-bad' : ''}` : 'cell-off' }));
+                }),
+                el('td', { class: 'center' }, repo.own.length || el('span', { class: 'hint' }, '·')));
+            }))))
+        : el('div', { class: 'panel empty-state' },
+            el('div', {}, state.repos.length ? 'No shared servers yet.' : 'No repositories yet.'),
+            el('div', { class: 'actions' },
+              el('button', { class: 'btn primary', type: 'button', onclick: () => openDrawer() }, 'New server'),
+              el('button', { class: 'btn', type: 'button', onclick: showAddRepo }, 'Add a repository')))),
+
+    state.unregistered.length ? el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, 'Found on this machine'), el('span', { class: 'hint push' }, 'Git repositories in your workspaces that the registry does not manage yet')),
+      el('div', { class: 'panel list' }, state.unregistered.map((r) => el('div', { class: 'file' },
+        el('span', { class: 'name' }, r.id),
+        el('button', { class: 'btn sm', type: 'button', title: r.path, onclick: () => addRepo(r.id) }, 'Add'))))) : null,
   );
 }
 
-function statusPill(status) {
-  const cls = status === 'synced' ? 'ok' : status === 'out of sync' ? 'warn' : status.startsWith('error') || status === 'hand-written' || status.includes('errors') ? 'err' : '';
-  return el('span', { class: `pill ${cls}`, title: status === 'hand-written' ? 'A hand-written config exists; use Sync → Replace' : status }, status.startsWith('error') ? 'error' : status);
+// ---------- repository page ----------
+const FILE_STATUS = {
+  ok: ['ok', 'Up to date'], missing: ['warn', 'Not generated yet'], stale: ['warn', 'Outdated'],
+  modified: ['bad', 'Hand-written'], orphan: ['warn', 'No longer needed'], none: ['', 'Nothing to generate'],
+};
+
+function repoPage(repo) {
+  const [health, label] = repoHealth(repo);
+  const { host, slug } = splitId(repo.id);
+  const attached = repo.servers;
+  const adding = [...(pending.get(repo.id) || [])].filter((s) => !attached.includes(s) && serverSpec(s));
+  const available = state.servers.filter((s) => !attached.includes(s.name) && !adding.includes(s.name) && !repo.own.includes(s.name));
+  const handWritten = repo.clones.some((c) => c.status === 'hand-written');
+
+  return el('div', { class: 'page' },
+    el('div', { class: 'page-head' },
+      el('div', {},
+        el('div', { class: 'eyebrow' }, 'Repository'),
+        el('h1', {}, el('span', { class: 'host' }, `${host}/`), slug),
+        el('div', { class: 'meta' },
+          el('span', { class: `pill ${health === 'none' ? '' : health}` }, el('span', { class: `dot ${health}` }), label),
+          repo.clones.map((c) => el('span', { class: 'path' }, c.path)))),
+      el('div', { class: 'actions' },
+        handWritten ? el('button', { class: 'btn', type: 'button', title: 'Overwrite the hand-written files; a .bak copy is kept', onclick: () => sync(repo.id, true) }, 'Replace hand-written files') : null,
+        repo.clones.length ? el('button', { class: 'btn', type: 'button', onclick: () => sync(repo.id) }, 'Sync') : null)),
+
+    el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, 'MCP servers'), el('div', { class: 'push' }, addServerPicker(repo, available))),
+      attached.length || adding.length
+        ? el('div', { class: 'panel list' }, adding.map((name) => serverCard(repo, name, true)), attached.map((name) => serverCard(repo, name, false)))
+        : el('div', { class: 'panel empty-state' }, el('div', {}, 'This repository uses no shared servers yet.'), addServerPicker(repo, available, true))),
+
+    repo.own.length ? el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, 'Only in this repository'), el('span', { class: 'hint push' }, 'Defined for this repository alone')),
+      el('div', { class: 'panel list' }, repo.own.map((name) => ownCard(repo, name)))) : null,
+
+    repo.env.length ? el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, 'Environment variables'), el('span', { class: 'hint push' }, 'Secrets are read from your shell and never stored')),
+      el('div', { class: 'actions' }, repo.env.map((e) => el('span', { class: `chip ${e.set ? 'ok' : 'bad'}`, title: e.set ? 'Set in the shell running loadout ui' : 'Not set in the shell running loadout ui' },
+        el('span', { class: 'mark' }, e.set ? '✓' : '✕'), e.name))),
+      repo.env.some((e) => !e.set) ? el('div', { class: 'hint' }, 'Export the missing ones where your editor is started, e.g. ', el('code', {}, `export ${repo.env.find((e) => !e.set).name}=…`)) : null) : null,
+
+    el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, 'Generated config files')),
+      repo.clones.length
+        ? el('div', { class: 'panel' }, repo.clones.map((c) => el('div', { class: 'list' },
+            repo.clones.length > 1 ? el('div', { class: 'clone-head' }, c.path) : null,
+            c.error ? el('div', { class: 'file' }, el('span', { class: 'msg error' }, c.error)) : null,
+            c.files.map((f) => {
+              const [cls, text] = FILE_STATUS[f.status] || ['', f.status];
+              return el('div', { class: 'file' },
+                el('span', { class: 'name' }, f.path),
+                f.tracked ? el('span', { class: 'pill warn', title: `Run: git rm --cached ${f.path}` }, 'committed to git') : null,
+                el('span', { class: `pill ${cls}` }, text));
+            }))))
+        : el('div', { class: 'panel empty-state' },
+            el('div', {}, 'Not cloned in your workspaces, so nothing is generated on this machine.'),
+            el('div', { class: 'hint mono' }, state.workspaces.join(', ') || 'No workspaces configured. Run: loadout init --workspace <dir>'))),
+
+    attached.length ? el('div', { class: 'actions' }, confirmButton('Remove all shared servers', 'Click again to remove all', () => removeAll(repo))) : null,
+  );
 }
 
-function renderMatrix() {
-  const table = $('#matrix');
-  const servers = state.servers.map((s) => s.name);
-  if (!state.repos.length) {
-    table.replaceChildren(el('tr', {}, el('td', { class: 'empty' }, 'No repositories yet — add one below.')));
-  } else {
-    const head = el('tr', {}, el('th', {}, 'Repository'), servers.map((s) => el('th', {}, s)),
-      el('th', { title: 'Servers defined only for this repository' }, 'Repo-only'), el('th', {}, 'Local clone'), el('th', {}));
-    const rows = state.repos.map((repo) => {
-      const cloned = repo.clones.length > 0;
-      return el('tr', {},
-        el('td', { class: 'repo' }, repo.id, repo.clones.map((c) => el('span', { class: 'clone' }, c.path))),
-        servers.map((s) => el('td', {}, el('span', { class: 'cell' },
-          el('input', {
-            type: 'checkbox', checked: repo.servers.includes(s), 'aria-label': `${s} for ${repo.id}`,
-            onchange: (e) => toggle(repo, s, e.target.checked, e.target),
-          }),
-          repo.servers.includes(s) ? gearButton(repo, s) : null,
-        ))),
-        el('td', {}, repo.own.length ? repo.own.map((n) => el('span', { class: 'own-chip' }, n)) : el('span', { class: 'hint' }, '—')),
-        el('td', {}, cloned ? repo.clones.map((c) => statusPill(c.status)) : el('span', { class: 'pill', title: 'Not found under your workspaces' }, 'not cloned')),
-        el('td', {}, cloned ? el('button', { class: 'btn small', onclick: () => sync(repo.id) }, 'Sync') : ''),
-      );
-    });
-    table.replaceChildren(el('thead', {}, head), el('tbody', {}, rows));
-  }
-  const un = $('#unregistered');
-  un.replaceChildren();
-  if (state.unregistered.length) {
-    un.append(el('span', { class: 'hint' }, 'Local repositories not in the registry:'));
-    for (const r of state.unregistered) {
-      un.append(el('button', { class: 'btn small', title: r.path, onclick: () => addRepo(r.id) }, `+ ${r.id}`));
-    }
-  }
+function addServerPicker(repo, available, primary) {
+  const wrap = el('div', { class: 'picker' });
+  const close = () => (menu.hidden = true);
+  const menu = el('div', { class: 'picker-menu', hidden: true, role: 'menu' },
+    available.map((s) => el('button', { class: 'picker-item', type: 'button', role: 'menuitem', onclick: () => { close(); addToRepo(repo, s.name); } },
+      el('span', { class: 'top' }, el('b', {}, s.name), el('span', { class: 'tag' }, s.kind), requiredOf(s).length ? el('span', { class: 'tag' }, 'asks for values') : null),
+      el('span', { class: 'sub' }, s.description || s.summary))),
+    available.length ? el('div', { class: 'picker-sep' }) : null,
+    el('button', { class: 'picker-item', type: 'button', role: 'menuitem', onclick: () => { close(); openDrawer({ repo: repo.id }); } },
+      el('span', { class: 'top' }, el('b', {}, 'New server…')), el('span', { class: 'sub' }, 'Paste a config or fill in a form')));
+  const btn = el('button', { class: `btn${primary ? ' primary' : ''}`, type: 'button', 'aria-haspopup': 'menu',
+    onclick: (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; } }, '+ Add server');
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) close(); });
+  wrap.append(btn, menu);
+  return wrap;
 }
 
-function serverSpec(name) {
-  return state.servers.find((s) => s.name === name);
-}
-
-/** Required params (no default) that the repository has not set. */
-function missingParams(repo, name) {
-  const values = (repo.params && repo.params[name]) || {};
-  return serverSpec(name).params.filter((p) => p.required && p.default === undefined && values[p.name] === undefined).map((p) => p.name);
-}
-
-function gearButton(repo, name) {
-  const spec = serverSpec(name);
-  if (!spec || !spec.params.length) return null;
-  const set = Object.keys((repo.params && repo.params[name]) || {}).length;
-  const missing = missingParams(repo, name);
-  return el('button', {
-    class: `gear ${missing.length ? 'missing' : set ? 'set' : ''}`,
-    title: missing.length ? `Missing: ${missing.join(', ')}` : `${set} of ${spec.params.length} params set for this repository`,
-    'aria-label': `Params of ${name} for ${repo.id}`,
-    onclick: () => openParams(repo, name, false),
-  }, missing.length ? '⚙ !' : set ? `⚙ ${set}` : '⚙');
-}
-
-// ---------- dialogs ----------
-function openDialog(title, body, actions) {
-  const d = $('#dlg');
-  d.replaceChildren(el('div', { class: 'dlg' },
-    el('h3', {}, title), body,
-    el('div', { class: 'msg error', id: 'dlg-error', hidden: true }),
-    el('div', { class: 'row-end' }, actions)));
-  d.showModal();
-}
-const closeDialog = () => $('#dlg').close();
-function dialogError(message) {
-  const e = $('#dlg-error');
-  e.textContent = message;
-  e.hidden = !message;
-}
-
-function openParams(repo, name, attach) {
-  const spec = serverSpec(name);
-  const values = (repo.params && repo.params[name]) || {};
-  const inputs = {};
-  const rows = spec.params.map((p) => {
-    const cur = values[p.name] === undefined ? '' : String(values[p.name]);
+function paramInputs(params, values, onInput) {
+  return params.map((p) => {
+    const v = values[p.name] ?? '';
+    const required = p.required && p.default === undefined;
     let input;
     if (p.type === 'boolean') {
       input = el('select', { name: p.name },
-        el('option', { value: '' }, p.default !== undefined ? `default (${p.default})` : '— not set —'),
+        el('option', { value: '' }, p.default !== undefined ? `Default (${p.default})` : 'Not set'),
         el('option', { value: 'true' }, 'true'), el('option', { value: 'false' }, 'false'));
-      input.value = cur;
+      input.value = v;
     } else {
       input = el('input', {
-        type: p.type === 'number' ? 'number' : 'text', name: p.name, spellcheck: 'false', autocomplete: 'off', value: cur,
-        placeholder: p.default !== undefined ? `default: ${p.default}` : p.type === 'secret' ? 'env://VAR_NAME' : p.required ? 'required' : 'optional',
+        type: p.type === 'number' ? 'number' : 'text', name: p.name, spellcheck: 'false', autocomplete: 'off', value: v,
+        placeholder: p.default !== undefined ? `Default: ${p.default}` : p.type === 'secret' ? 'env://VAR_NAME' : required ? 'Required' : 'Optional',
       });
+      if (required) input.setAttribute('aria-invalid', String(!v));
     }
-    inputs[p.name] = input;
-    return el('label', {},
-      el('span', {}, el('code', {}, p.name), el('span', { class: 'pill' }, p.type),
-        p.required && p.default === undefined ? el('span', { class: 'pill err' }, 'required') : null),
+    input.addEventListener('input', () => {
+      if (required && p.type !== 'boolean') input.setAttribute('aria-invalid', String(!input.value));
+      onInput(p.name, input.value);
+    });
+    return el('label', { class: 'field' },
+      el('span', { class: 'field-label' }, el('code', {}, p.name), el('span', { class: 'tag' }, p.type), required ? el('span', { class: 'tag' }, 'required') : null),
       input,
-      p.type === 'secret' ? el('span', { class: 'hint' }, 'A reference, not the key itself: env://VAR_NAME — the value is read from your shell.') : null,
+      p.type === 'secret' && p.default === undefined ? el('span', { class: 'hint' }, 'A reference like env://VAR_NAME, not the key itself.') : null,
       p.description ? el('span', { class: 'hint' }, p.description) : null);
   });
-  const save = el('button', { class: 'btn primary', type: 'button' }, attach ? 'Attach & save' : 'Save');
-  save.addEventListener('click', async () => {
-    const params = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value]));
-    save.disabled = true;
+}
+
+const asStrings = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, String(v)]));
+const sameValues = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])].every((k) => (a[k] || '') === (b[k] || ''));
+
+function serverCard(repo, name, isPending) {
+  const spec = serverSpec(name);
+  const key = `${repo.id}|${name}`;
+  const saved = asStrings(repo.params[name]);
+  const draft = drafts.get(key) || { ...saved };
+  const missing = missingParams(repo, name);
+  const msg = el('div', { class: 'msg error', hidden: true });
+  const saveBtn = el('button', { class: 'btn sm primary', type: 'button' }, isPending ? 'Add to repository' : 'Save');
+  const resetBtn = el('button', { class: 'btn sm ghost', type: 'button' }, isPending ? 'Cancel' : 'Discard');
+  const foot = el('div', { class: 'params-foot' }, msg, resetBtn, saveBtn);
+  const updateButtons = () => {
+    if (isPending) return;
+    const dirty = !sameValues(draft, saved);
+    saveBtn.hidden = !dirty;
+    resetBtn.hidden = !dirty;
+    foot.hidden = !dirty && msg.hidden;
+  };
+  const onInput = (k, v) => { draft[k] = v; drafts.set(key, draft); updateButtons(); };
+  // Required params, and optional ones this repository already set, are shown; the rest fold into "More options".
+  const primary = spec.params.filter((p) => (p.required && p.default === undefined) || saved[p.name] !== undefined || draft[p.name]);
+  const optional = spec.params.filter((p) => !primary.includes(p));
+  const fields = paramInputs(primary, draft, onInput);
+  const more = optional.length
+    ? el('details', { class: 'more' },
+        el('summary', {}, `More options (${optional.map((p) => p.name).join(', ')})`),
+        el('div', { class: 'params-grid' }, paramInputs(optional, draft, onInput)))
+    : null;
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    msg.hidden = true;
     try {
-      await api('POST', '/api/params', { repo: repo.id, server: name, params, attach });
-      closeDialog();
-      toast(attach ? `Attached ${name} → ${repo.id}` : `Saved ${name} params for ${repo.id}`);
+      await api('POST', '/api/params', { repo: repo.id, server: name, params: draft, attach: isPending });
+      drafts.delete(key);
+      pending.get(repo.id)?.delete(name);
+      toast(isPending ? `Added ${name}` : `Saved ${name} values`);
       await refresh();
       if (repo.clones.length) await sync(repo.id, false, true);
     } catch (e) {
-      dialogError(e.message);
-      save.disabled = false;
+      msg.textContent = e.message;
+      msg.hidden = false;
+      foot.hidden = false;
+      saveBtn.disabled = false;
     }
   });
-  openDialog(`${name} · ${repo.id}`,
-    el('div', {}, el('p', { class: 'hint' }, 'Empty fields use the default. These values apply to this repository only.'), rows),
-    [el('button', { class: 'btn', type: 'button', onclick: closeDialog }, 'Cancel'), save]);
-  const first = Object.values(inputs)[0];
-  if (first) first.focus();
+  resetBtn.addEventListener('click', () => {
+    drafts.delete(key);
+    if (isPending) pending.get(repo.id)?.delete(name);
+    render();
+  });
+  updateButtons();
+
+  return el('div', { class: `srv${isPending ? ' pending' : ''}` },
+    el('div', { class: 'srv-head' },
+      serverIcon(spec),
+      el('div', { class: 'srv-main' },
+        el('div', { class: 'srv-name' }, el('a', { href: serverHref(name) }, name),
+          isPending ? el('span', { class: 'pill accent' }, 'Fill in the values to add it') : null,
+          !isPending && missing.length ? el('span', { class: 'pill bad' }, `Missing ${missing.join(', ')}`) : null,
+          spec.status && spec.status !== 'stable' ? el('span', { class: `pill ${spec.status === 'deprecated' ? 'bad' : ''}` }, spec.status) : null),
+        spec.description ? el('div', { class: 'srv-desc' }, spec.description) : null,
+        el('div', { class: 'srv-sum' }, spec.summary)),
+      isPending ? null : confirmButton('Remove', 'Click to remove', () => detach(repo, name), `Stop using ${name} in this repository`)),
+    primary.length || isPending
+      ? el('div', { class: 'params' }, fields, more, foot)
+      : more ? el('div', { class: 'more-inline' }, more, foot) : null);
 }
 
-async function openSource(s) {
-  await guard(async () => {
-    const q = s.repo ? `?repo=${encodeURIComponent(s.repo)}` : '';
-    const src = await api('GET', `/api/servers/${encodeURIComponent(s.name)}/source${q}`);
-    const ta = el('textarea', { class: 'source', spellcheck: 'false' });
-    ta.value = src.yaml;
-    const save = el('button', { class: 'btn primary', type: 'button' }, 'Save');
+function ownCard(repo, name) {
+  const s = state.repoOnly.find((x) => x.repo === repo.id && x.name === name);
+  return el('div', { class: 'srv' },
+    el('div', { class: 'srv-head' },
+      serverIcon(s),
+      el('div', { class: 'srv-main' },
+        el('div', { class: 'srv-name' }, el('a', { href: serverHref(name, repo.id) }, name)),
+        s.description ? el('div', { class: 'srv-desc' }, s.description) : null,
+        el('div', { class: 'srv-sum' }, s.summary)),
+      el('a', { class: 'btn sm ghost', href: serverHref(name, repo.id) }, 'Open')));
+}
+
+// ---------- server page ----------
+function serverPage(name, repoId) {
+  const s = repoId ? state.repoOnly.find((x) => x.repo === repoId && x.name === name) : serverSpec(name);
+  if (!s) return el('div', { class: 'page' }, el('div', { class: 'panel empty-state' }, `There is no server named ${name}.`, el('a', { class: 'btn', href: '#/' }, 'Back to overview')));
+  const key = `${repoId || ''}|${name}`;
+  const isEditing = editing && editing.key === key;
+  const users = s.usedBy;
+  const q = repoId ? `?repo=${encodeURIComponent(repoId)}` : '';
+
+  const startEdit = () => guard(async () => {
+    const src = await api('GET', `/api/servers/${encodeURIComponent(name)}/source${q}`);
+    editing = { key, yaml: src.yaml, path: src.path };
+    render();
+  });
+
+  let body;
+  if (isEditing) {
+    const ta = el('textarea', { class: 'code', spellcheck: 'false', 'aria-label': 'Server definition' });
+    ta.value = editing.yaml;
+    ta.addEventListener('input', () => (editing.yaml = ta.value));
+    const msg = el('div', { class: 'msg error', hidden: true });
+    const save = el('button', { class: 'btn primary', type: 'button' }, 'Save definition');
     save.addEventListener('click', async () => {
       save.disabled = true;
       try {
-        const r = await api('PUT', `/api/servers/${encodeURIComponent(s.name)}/source${q}`, { yaml: ta.value });
-        closeDialog();
-        toast(r.warnings.length ? `Saved with ${r.warnings.length} warning(s): ${r.warnings[0].message}` : `Saved ${src.path}`);
+        const r = await api('PUT', `/api/servers/${encodeURIComponent(name)}/source${q}`, { yaml: ta.value });
+        editing = null;
+        toast(r.warnings.length ? `Saved with a warning: ${r.warnings[0].message}` : 'Definition saved');
         await refresh();
       } catch (e) {
-        dialogError(e.message);
+        msg.textContent = e.message;
+        msg.hidden = false;
         save.disabled = false;
       }
     });
-    openDialog(src.path, el('div', {}, ta,
-      el('p', { class: 'hint' }, 'Declare params under "params:" (type: string | number | boolean | secret, required, default) and use them as {{ params.name }}. Saving re-validates the whole registry and is refused if it would break a repository.')),
-      [el('button', { class: 'btn', type: 'button', onclick: closeDialog }, 'Cancel'), save]);
-  });
-}
-
-function serverRow(s) {
-  const actions = [el('button', { class: 'btn small', title: 'Edit the definition (YAML)', onclick: () => openSource(s) }, 'Edit')];
-  if (s.repo) {
-    actions.push(el('button', { class: 'btn small', title: 'Move to servers/ so other repositories can use it', onclick: () => moveServer('share', s) }, 'Make shared'));
-  } else if (s.usedBy.length === 1) {
-    actions.push(el('button', { class: 'btn small', title: `Move into repos/${s.usedBy[0]}/ — only that repository uses it`, onclick: () => moveServer('unshare', s) }, 'Make repo-only'));
+    body = el('div', { class: 'section editor' },
+      el('div', { class: 'section-head' }, el('h2', { class: 'mono' }, editing.path)),
+      ta,
+      el('div', { class: 'hint' }, 'Params go under "params:" with a type (string, number, boolean or secret), and optionally required or a default. Use them as {{ params.name }}. Saving checks every repository and is refused if one would break.'),
+      msg,
+      el('div', { class: 'actions' }, save, el('button', { class: 'btn ghost', type: 'button', onclick: () => { editing = null; render(); } }, 'Cancel')));
+  } else {
+    body = el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, 'Definition')),
+      el('div', { class: 'panel list' },
+        el('div', { class: 'srv' }, el('div', { class: 'srv-head' }, serverIcon(s), el('div', { class: 'srv-main' }, el('div', { class: 'srv-sum', style: 'margin:0;color:var(--ink)' }, s.summary)))),
+        s.params.length ? el('div', { class: 'table-wrap' }, el('table', { class: 'def-table' },
+          el('thead', {}, el('tr', {}, el('th', {}, 'Param'), el('th', {}, 'Type'), el('th', {}, 'Default'), el('th', {}, 'Notes'))),
+          el('tbody', {}, s.params.map((p) => el('tr', {},
+            el('td', {}, p.name),
+            el('td', {}, p.type),
+            el('td', { class: 'mono' }, p.default !== undefined ? String(p.default) : p.required ? el('span', { class: 'pill accent' }, 'set per repository') : el('span', { class: 'hint' }, 'none')),
+            el('td', { class: 'hint' }, p.description || '')))))) : null));
   }
-  actions.push(el('button', {
-    class: 'btn small danger', disabled: !s.repo && s.usedBy.length > 0,
-    title: s.repo ? `Delete ${s.repo}'s own ${s.name}` : s.usedBy.length ? `Detach from ${s.usedBy.join(', ')} first` : 'Delete this definition',
-    onclick: () => removeServer(s),
-  }, 'Delete'));
-  return el('div', { class: 'server' },
-    el('div', {},
-      el('div', { class: 'name' }, s.name,
-        el('span', { class: 'pill accent' }, s.kind),
-        s.status ? el('span', { class: `pill ${s.status === 'deprecated' ? 'err' : ''}` }, s.status) : null),
-      s.description ? el('div', {}, s.description) : null,
-      el('div', { class: 'summary' }, s.summary),
-      s.envVars.length ? el('div', {}, el('span', { class: 'hint' }, 'needs env: '), s.envVars.map((v) => el('span', { class: 'chip' }, v))) : null,
-      !s.repo && s.params.some((p) => p.type !== 'secret' || p.default === undefined)
-        ? el('div', {}, el('span', { class: 'hint' }, 'per-repo params: '), s.params.map((p) => el('span', { class: 'own-chip', title: p.description || p.type }, p.name + (p.required && p.default === undefined ? '*' : ''))))
-        : null,
-    ),
-    el('div', { class: 'side' }, s.repo ? null : el('span', { class: 'hint' }, `used by ${s.usedBy.length}`), actions),
+
+  return el('div', { class: 'page' },
+    el('div', { class: 'page-head' },
+      el('div', {},
+        el('div', { class: 'eyebrow' }, repoId ? `Only for ${repoId}` : 'Shared server'),
+        el('h1', {}, name),
+        el('div', { class: 'meta' },
+          el('span', { class: 'pill accent' }, s.kind === 'remote' ? 'Remote' : 'Local command'),
+          s.status ? el('span', { class: `pill ${s.status === 'deprecated' ? 'bad' : ''}` }, s.status) : null,
+          s.description ? el('span', {}, s.description) : null)),
+      el('div', { class: 'actions' },
+        isEditing ? null : el('button', { class: 'btn', type: 'button', onclick: startEdit }, 'Edit definition'),
+        repoId ? el('button', { class: 'btn', type: 'button', title: 'Move it to the shared catalog; it stays on in this repository', onclick: () => moveServer('share', name, repoId) }, 'Make shared') : null,
+        !repoId && users.length === 1 ? el('button', { class: 'btn', type: 'button', title: `Only ${users[0]} uses it`, onclick: () => moveServer('unshare', name) }, 'Make repository-only') : null,
+        repoId || !users.length
+          ? confirmButton('Delete', 'Click again to delete', () => removeServer(name, repoId))
+          : el('button', { class: 'btn sm ghost', type: 'button', disabled: true, title: `Remove it from ${users.join(', ')} first` }, 'Delete'))),
+
+    body,
+
+    s.envVars.length ? el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, 'Reads from your shell')),
+      el('div', { class: 'actions' }, s.envVars.map((v) => el('span', { class: 'chip' }, v)))) : null,
+
+    repoId ? null : el('div', { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', {}, `Used by ${users.length} ${users.length === 1 ? 'repository' : 'repositories'}`)),
+      users.length
+        ? el('div', { class: 'panel list' }, users.map((id) => {
+            const repo = repoById(id);
+            const values = Object.entries(repo?.params[name] || {});
+            const missing = repo ? missingParams(repo, name) : [];
+            return el('a', { class: 'file', href: repoHref(id) },
+              el('span', { class: 'name' }, id),
+              values.length ? el('span', { class: 'hint mono' }, values.map(([k, v]) => `${k}=${v}`).join('  ')) : null,
+              missing.length ? el('span', { class: 'pill bad' }, `Missing ${missing.join(', ')}`) : null);
+          }))
+        : el('div', { class: 'panel empty-state' }, 'No repository uses it yet. Add it from a repository page.')),
   );
 }
 
-function renderServers() {
-  const box = $('#servers');
-  if (!state.servers.length && !state.repoOnly.length) return box.replaceChildren(el('div', { class: 'empty' }, 'No servers yet — add one above.'));
-  const byRepo = new Map();
-  for (const s of state.repoOnly) byRepo.set(s.repo, [...(byRepo.get(s.repo) || []), s]);
-  box.replaceChildren(...[
-    el('div', { class: 'group-head' }, `Shared (${state.servers.length})`),
-    state.servers.length ? state.servers.map(serverRow) : el('div', { class: 'empty' }, 'None.'),
-    [...byRepo].map(([repo, list]) => [
-      el('div', { class: 'group-head' }, 'Only for ', el('span', { class: 'repo' }, repo)),
-      list.map(serverRow),
-    ]),
-  ].flat(3));
+// ---------- actions ----------
+async function sync(repoId, force = false, quiet = false) {
+  await guard(async () => {
+    const r = await api('POST', '/api/sync', repoId ? { repo: repoId, force } : { force });
+    const conflicts = r.results.filter((x) => x.files && x.files.some((f) => f.outcome === 'conflict'));
+    const errors = r.results.filter((x) => x.error);
+    if (errors.length) toast(`${errors[0].id}: ${errors[0].error}`, true);
+    else if (conflicts.length) toast(`${conflicts[0].id} has hand-written config files. Use "Replace hand-written files".`, true);
+    else if (!quiet) toast(r.results.length ? `Synced ${r.results.length} ${r.results.length === 1 ? 'clone' : 'clones'}` : 'No registered repositories are cloned in your workspaces');
+    await refresh();
+  });
 }
 
-function renderScope() {
+async function addToRepo(repo, name) {
+  if (requiredOf(serverSpec(name)).length) {
+    if (!pending.has(repo.id)) pending.set(repo.id, new Set());
+    pending.get(repo.id).add(name);
+    render();
+    const input = document.querySelector(`#main .srv.pending input[name]`);
+    if (input) input.focus();
+    return;
+  }
+  await guard(async () => {
+    await api('POST', '/api/bindings', { repo: repo.id, server: name, attached: true });
+    toast(`Added ${name}`);
+    await refresh();
+    if (repo.clones.length) await sync(repo.id, false, true);
+  });
+}
+
+async function detach(repo, name) {
+  await guard(async () => {
+    await api('POST', '/api/bindings', { repo: repo.id, server: name, attached: false });
+    drafts.delete(`${repo.id}|${name}`);
+    toast(`Removed ${name}`);
+    await refresh();
+    if (repo.clones.length) await sync(repo.id, false, true);
+  });
+}
+
+async function removeAll(repo) {
+  await guard(async () => {
+    for (const name of repo.servers) await api('POST', '/api/bindings', { repo: repo.id, server: name, attached: false });
+    toast(`Removed every shared server from ${repo.id}`);
+    await refresh();
+    if (repo.clones.length) await sync(repo.id, false, true);
+  });
+}
+
+async function addRepo(input) {
+  await guard(async () => {
+    const before = new Set(state.repos.map((r) => r.id));
+    await api('POST', '/api/repos', { repo: input });
+    $('#add-repo-input').value = '';
+    $('#add-repo-form').hidden = true;
+    await refresh();
+    const added = state.repos.find((r) => !before.has(r.id)) || state.repos.find((r) => input.toLowerCase().includes(splitId(r.id).slug));
+    if (added) location.hash = repoHref(added.id);
+    toast('Repository added. Now add the servers it should use.');
+  });
+}
+
+async function removeServer(name, repoId) {
+  await guard(async () => {
+    await api('DELETE', `/api/servers/${encodeURIComponent(name)}${repoId ? `?repo=${encodeURIComponent(repoId)}` : ''}`);
+    toast(`Deleted ${name}`);
+    location.hash = repoId ? repoHref(repoId) : '#/';
+    await refresh();
+    if (repoId && repoById(repoId)?.clones.length) await sync(repoId, false, true);
+  });
+}
+
+async function moveServer(kind, name, repoId) {
+  await guard(async () => {
+    let repo = repoId;
+    if (kind === 'share') {
+      await api('POST', '/api/share', { repo: repoId, name });
+      toast(`${name} is now shared and still on in ${repoId}`);
+      location.hash = serverHref(name);
+    } else {
+      repo = (await api('POST', '/api/unshare', { name })).repo;
+      toast(`${name} now belongs to ${repo} only`);
+      location.hash = serverHref(name, repo);
+    }
+    await refresh();
+    if (repoById(repo)?.clones.length) await sync(repo, false, true);
+  });
+}
+
+function showAddRepo() {
+  $('#add-repo-form').hidden = false;
+  $('#add-repo-input').focus();
+}
+
+// ---------- new server drawer ----------
+let tab = 'paste';
+let lastPreview = null;
+
+function openDrawer(ctx = {}) {
+  const ids = [...state.repos.map((r) => r.id), ...state.unregistered.map((r) => r.id)];
   const sel = $('#scope-repo');
-  const current = sel.value;
-  const ids = [...state.repos.map((r) => r.id), ...state.unregistered.map((r) => r.id)];
   sel.replaceChildren(...ids.map((id) => el('option', { value: id }, id)));
-  if (ids.includes(current)) sel.value = current;
-  const repoScope = document.querySelector('input[name=scope]:checked').value === 'repo';
+  if (ctx.repo) sel.value = ctx.repo;
+  document.querySelector('input[name=scope][value=shared]').checked = true;
   document.querySelector('input[name=scope][value=repo]').disabled = !ids.length;
-  sel.disabled = !repoScope || !ids.length;
-  $('#attach-row').hidden = repoScope;
+  $('#attach-list').replaceChildren(...(ids.length
+    ? ids.map((id) => el('label', {}, el('input', { type: 'checkbox', value: id, checked: id === ctx.repo }), id))
+    : [el('span', { class: 'hint' }, 'No repositories yet.')]));
+  updateScope();
+  $('#scrim').hidden = false;
+  $('#drawer').hidden = false;
+  (tab === 'paste' ? $('#paste-text') : $('#f-name')).focus();
 }
 
-function renderAttachList() {
-  renderScope();
-  const box = $('#attach-list');
-  const checked = new Set([...box.querySelectorAll('input:checked')].map((i) => i.value));
-  const ids = [...state.repos.map((r) => r.id), ...state.unregistered.map((r) => r.id)];
-  if (!ids.length) return box.replaceChildren('no repositories yet');
-  box.className = '';
-  box.replaceChildren(...ids.map((id) => el('label', {}, el('input', { type: 'checkbox', value: id, checked: checked.has(id) }), id)));
+function closeDrawer() {
+  $('#scrim').hidden = true;
+  $('#drawer').hidden = true;
 }
 
-// ---------- add server ----------
+function updateScope() {
+  const repoScope = document.querySelector('input[name=scope]:checked').value === 'repo';
+  $('#scope-repo').disabled = !repoScope;
+  $('#attach-block').hidden = repoScope;
+  schedulePreview();
+}
+
 function addRequest() {
   const description = $('#add-desc').value;
   const repo = document.querySelector('input[name=scope]:checked').value === 'repo' ? $('#scope-repo').value : undefined;
@@ -522,195 +1001,123 @@ function addRequest() {
   return { mode: 'form', description, repo, form: { name: $('#f-name').value, kind, url: $('#f-url').value, command: $('#f-cmd').value, pairs: $('#f-pairs').value } };
 }
 
-function inputIsEmpty(req) {
-  return req.mode === 'json' ? !req.text.trim() : !(req.form.name.trim() || req.form.url.trim() || req.form.command.trim());
-}
+const isEmpty = (req) => (req.mode === 'json' ? !req.text.trim() : !(req.form.name.trim() || req.form.url.trim() || req.form.command.trim()));
+const EMPTY_PREVIEW = () => el('div', { class: 'hint' }, 'The definition that will be saved appears here as you type.');
 
 let previewTimer;
 let previewSeq = 0;
 function schedulePreview() {
   clearTimeout(previewTimer);
-  previewTimer = setTimeout(preview, 250);
+  previewTimer = setTimeout(preview, 220);
 }
 
 async function preview() {
   const req = addRequest();
   const box = $('#preview');
   const seq = ++previewSeq;
-  if (inputIsEmpty(req)) {
-    lastPreviewOk = false;
+  lastPreview = null;
+  if (isEmpty(req)) {
     $('#overwrite-l').hidden = true;
     updateAddButton();
-    return box.replaceChildren(el('div', { class: 'muted' }, 'The generated definition will appear here.'));
+    return box.replaceChildren(EMPTY_PREVIEW());
   }
   try {
     const p = await api('POST', '/api/preview', req);
     if (seq !== previewSeq) return;
-    const anyExists = p.servers.some((s) => s.exists);
-    const anyError = p.servers.some((s) => s.problems.some((x) => x.level === 'error'));
-    lastPreviewOk = !anyError;
-    $('#overwrite-l').hidden = !anyExists;
+    lastPreview = p;
+    $('#overwrite-l').hidden = !p.servers.some((s) => s.exists);
+    const required = p.servers.flatMap((s) => Object.entries(s.def.params || {}).filter(([, x]) => x.required && x.default === undefined).map(([k]) => k));
+    $('#attach-hint').textContent = required.length
+      ? `Add it to these repositories. Each one will ask for ${required.join(', ')}.`
+      : 'Add it to these repositories now:';
     box.replaceChildren(
-      ...p.servers.map((s) => el('div', { class: 'file' },
-        el('div', { class: 'file-head' }, s.path, s.exists ? el('span', { class: 'pill warn' }, 'already exists') : el('span', { class: 'pill ok' }, 'new')),
+      ...p.servers.map((s) => el('div', { class: 'section' },
+        el('div', { class: 'preview-head' }, s.path, s.exists ? el('span', { class: 'pill warn' }, 'already exists') : el('span', { class: 'pill ok' }, 'new')),
         el('pre', {}, s.yaml),
-        s.problems.map((x) => el('div', { class: `msg ${x.level}` }, x.message)),
-        s.envVars.length ? el('div', { class: 'msg note' }, 'Export in your shell: ', s.envVars.map((v) => el('span', { class: 'chip' }, v))) : null,
-      )),
-      ...p.notes.filter((n) => !n.includes('NOT copied')).map((n) => el('div', { class: 'msg note' }, n)),
+        s.problems.map((x) => el('div', { class: `msg ${x.level === 'error' ? 'error' : 'warn'}` }, x.message)),
+        s.envVars.length ? el('div', { class: 'msg warn' }, `Reads ${s.envVars.join(', ')} from your shell. The value you pasted is not saved.`) : null)),
+      ...p.notes.filter((n) => !n.includes('NOT copied') && !n.includes('set per repository')).map((n) => el('div', { class: 'msg info' }, n)),
     );
   } catch (e) {
     if (seq !== previewSeq) return;
-    lastPreviewOk = false;
     box.replaceChildren(el('div', { class: 'msg error' }, e.message));
   }
   updateAddButton();
 }
 
 function updateAddButton() {
+  const ok = lastPreview && !lastPreview.servers.some((s) => s.problems.some((x) => x.level === 'error'));
   const needsOverwrite = !$('#overwrite-l').hidden && !$('#overwrite').checked;
-  $('#add-btn').disabled = !lastPreviewOk || needsOverwrite;
+  $('#add-btn').disabled = !ok || needsOverwrite;
 }
 
 async function addServer() {
   const req = addRequest();
   req.overwrite = $('#overwrite').checked;
   if (!req.repo) req.attach = [...document.querySelectorAll('#attach-list input:checked')].map((i) => i.value);
+  $('#add-btn').disabled = true;
   await guard(async () => {
     const r = await api('POST', '/api/servers', req);
-    toast(req.repo ? `Added ${r.written.join(', ')} for ${req.repo} only` : `Added ${r.written.join(', ')}${r.attached.length ? ` → ${r.attached.length} repo(s)` : ''}`);
+    for (const repo of r.needsParams) {
+      if (!pending.has(repo)) pending.set(repo, new Set());
+      for (const n of r.written) pending.get(repo).add(n);
+    }
+    closeDrawer();
     for (const id of ['#paste-text', '#paste-name', '#f-name', '#f-url', '#f-cmd', '#f-pairs', '#add-desc']) $(id).value = '';
     $('#overwrite').checked = false;
-    for (const i of document.querySelectorAll('#attach-list input')) i.checked = false;
-    await preview();
+    $('#preview').replaceChildren(EMPTY_PREVIEW());
+    lastPreview = null;
     await refresh();
-    for (const id of r.attached) await sync(id, false, true);
+    const target = r.needsParams[0] || req.repo || r.attached[0];
+    if (r.needsParams.length) toast(`Added ${r.written.join(', ')}. Fill in its values to turn it on.`);
+    else toast(`Added ${r.written.join(', ')}${r.attached.length ? ` to ${r.attached.length} ${r.attached.length === 1 ? 'repository' : 'repositories'}` : ''}`);
+    location.hash = target ? repoHref(target) : serverHref(r.written[0]);
+    for (const id of r.attached) if (repoById(id)?.clones.length) await sync(id, false, true);
   });
-}
-
-// ---------- repositories ----------
-async function toggle(repo, server, attached, input) {
-  if (attached && serverSpec(server).params.some((p) => p.required && p.default === undefined)) {
-    input.checked = false; // attached only once the required values are saved
-    return openParams(repo, server, true);
-  }
-  input.disabled = true;
-  const ok = await guard(async () => {
-    await api('POST', '/api/bindings', { repo: repo.id, server, attached });
-    return true;
-  });
-  if (!ok) input.checked = !attached;
-  await refresh();
-  if (ok) {
-    toast(`${attached ? 'Attached' : 'Detached'} ${server} ${attached ? '→' : 'from'} ${repo.id}`);
-    if (repo.clones.length) await sync(repo.id, false, true);
-  }
-}
-
-async function addRepo(id) {
-  await guard(async () => {
-    await api('POST', '/api/repos', { repo: id });
-    $('#repo-input').value = '';
-    await refresh();
-    toast(`Added ${id}. Tick the servers it should use.`);
-  });
-}
-
-async function removeServer(s) {
-  const path = s.repo ? `repos/${s.repo}/${s.name}.yaml` : `servers/${s.name}.yaml`;
-  if (!confirm(`Delete ${path}?`)) return;
-  await guard(async () => {
-    await api('DELETE', `/api/servers/${encodeURIComponent(s.name)}${s.repo ? `?repo=${encodeURIComponent(s.repo)}` : ''}`);
-    toast(`Deleted ${path}`);
-    await refresh();
-    if (s.repo) await sync(s.repo, false, true);
-  });
-}
-
-async function moveServer(kind, s) {
-  await guard(async () => {
-    let repo = s.repo;
-    if (kind === 'share') {
-      await api('POST', '/api/share', { repo: s.repo, name: s.name });
-      toast(`${s.name} is now shared (still attached to ${s.repo})`);
-    } else {
-      repo = (await api('POST', '/api/unshare', { name: s.name })).repo;
-      toast(`${s.name} now belongs to ${repo} only`);
-    }
-    await refresh();
-    if (state.repos.find((r) => r.id === repo)?.clones.length) await sync(repo, false, true);
-  });
-}
-
-// ---------- sync ----------
-const OUTCOME = {
-  created: ['ok', 'created'], updated: ['ok', 'updated'], unchanged: ['', 'up to date'], replaced: ['ok', 'replaced (.bak kept)'],
-  conflict: ['err', 'hand-written — not replaced'], removed: ['ok', 'removed'], kept: ['', 'hand-written, left alone'], absent: ['', '—'],
-};
-
-async function sync(repoId, force = false, quiet = false) {
-  await guard(async () => {
-    const r = await api('POST', '/api/sync', repoId ? { repo: repoId, force } : { force });
-    const conflicts = r.results.some((x) => x.files && x.files.some((f) => f.outcome === 'conflict'));
-    const errors = r.results.some((x) => x.error);
-    if (!quiet || conflicts || errors) showSyncResults(r.results);
-    if (!quiet) toast(r.results.length ? `Synced ${r.results.length} clone(s)` : 'No registered repositories found under your workspaces');
-    await refresh();
-  });
-}
-
-function showSyncResults(results) {
-  $('#sync-card').hidden = false;
-  const box = $('#sync-results');
-  if (!results.length) return box.replaceChildren(el('div', { class: 'empty' }, 'No registered repositories are cloned under your workspaces (' + (state.workspaces.join(', ') || 'none configured — run loadout init --workspace <dir>') + ').'));
-  box.replaceChildren(...results.map((r) => el('div', { class: 'sync-repo' },
-    el('div', {}, el('b', {}, r.id), ' ', el('span', { class: 'hint' }, r.path)),
-    r.error ? el('div', { class: 'msg error' }, r.error) : el('div', { class: 'files' },
-      r.files.map((f) => {
-        const [cls, label] = OUTCOME[f.outcome] || ['', f.outcome];
-        return el('div', {}, f.path.padEnd(18, ' '), ' ', el('span', { class: `pill ${cls}` }, label),
-          f.tracked ? el('span', { class: 'pill warn', title: `git rm --cached ${f.path}` }, 'tracked by git') : null);
-      }),
-    ),
-    r.files && r.files.some((f) => f.outcome === 'conflict')
-      ? el('button', { class: 'btn small', onclick: () => sync(r.id, true) }, 'Replace hand-written files (keep .bak)') : null,
-    r.missingEnv && r.missingEnv.length ? el('div', { class: 'msg note' }, 'Not set in the shell running loadout ui: ', r.missingEnv.map((v) => el('span', { class: 'chip' }, v))) : null,
-  )));
+  updateAddButton();
 }
 
 // ---------- wiring ----------
-for (const b of document.querySelectorAll('.tabs button')) {
+for (const b of document.querySelectorAll('[data-tab]')) {
   b.addEventListener('click', () => {
     tab = b.dataset.tab;
-    for (const x of document.querySelectorAll('.tabs button')) x.classList.toggle('active', x === b);
+    for (const x of document.querySelectorAll('[data-tab]')) x.setAttribute('aria-pressed', String(x === b));
     for (const p of document.querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== tab;
-    preview();
+    schedulePreview();
   });
 }
 for (const r of document.querySelectorAll('input[name=kind]')) {
   r.addEventListener('change', () => {
-    const remote = r.value === 'remote' && r.checked;
     if (!r.checked) return;
+    const remote = r.value === 'remote';
     $('#f-url-l').hidden = !remote;
     $('#f-cmd-l').hidden = remote;
     $('#f-pairs-label').textContent = remote ? 'Headers' : 'Environment variables';
-    $('#f-pairs').placeholder = remote ? 'Authorization=Bearer YOUR_KEY' : 'API_KEY=YOUR_KEY';
+    $('#f-pairs').placeholder = remote ? 'Authorization=Bearer YOUR_KEY' : 'PGPASSWORD={{ params.password }}';
     schedulePreview();
   });
 }
-for (const id of ['#paste-text', '#paste-name', '#f-name', '#f-url', '#f-cmd', '#f-pairs', '#add-desc']) $(id).addEventListener('input', schedulePreview);
-for (const r of document.querySelectorAll('input[name=scope]')) r.addEventListener('change', () => { renderScope(); schedulePreview(); });
+for (const r of document.querySelectorAll('input[name=scope]')) r.addEventListener('change', updateScope);
 $('#scope-repo').addEventListener('change', schedulePreview);
+for (const id of ['#paste-text', '#paste-name', '#f-name', '#f-url', '#f-cmd', '#f-pairs', '#add-desc']) $(id).addEventListener('input', schedulePreview);
 $('#overwrite').addEventListener('change', updateAddButton);
 $('#add-btn').addEventListener('click', addServer);
-$('#sync-all').addEventListener('click', () => sync(undefined));
-$('#sync-close').addEventListener('click', () => ($('#sync-card').hidden = true));
-$('#add-repo').addEventListener('submit', (e) => {
+$('#drawer-close').addEventListener('click', closeDrawer);
+$('#drawer-cancel').addEventListener('click', closeDrawer);
+$('#scrim').addEventListener('click', closeDrawer);
+$('#new-server-btn').addEventListener('click', () => { const r = route(); openDrawer({ repo: r.view === 'repo' ? r.id : null }); });
+$('#add-repo-btn').addEventListener('click', showAddRepo);
+$('#add-repo-cancel').addEventListener('click', () => ($('#add-repo-form').hidden = true));
+$('#add-repo-form').addEventListener('submit', (e) => {
   e.preventDefault();
-  const v = $('#repo-input').value.trim();
+  const v = $('#add-repo-input').value.trim();
   if (v) addRepo(v);
 });
-window.addEventListener('focus', () => guard(refresh));
+$('#sync-all').addEventListener('click', () => sync(undefined));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer(); });
+window.addEventListener('hashchange', () => { editing = null; render(); $('#main').scrollTop = 0; });
+// Pick up edits made elsewhere (CLI, editor) when the window regains focus, without interrupting typing.
+window.addEventListener('focus', () => guard(async () => { state = await api('GET', '/api/state'); render.soft = true; render(); render.soft = false; }));
 
 if (!TOKEN) document.body.replaceChildren(el('p', { style: 'padding:24px' }, 'Missing token: open the URL printed by `loadout ui`.'));
 else guard(refresh);

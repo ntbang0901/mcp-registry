@@ -12,7 +12,7 @@ import { BINDINGS_FILE, formatProblems, knownRepos, loadRegistry, loadValidRegis
 import { detectRepo, findGitRepos, normalizeRepoId, repoContext } from './repo.js';
 import { repoStatus, syncRepo, type SyncResult } from './sync.js';
 import type { RepoContext } from './types.js';
-import { updateBindingParams } from './params.js';
+import { requiredParams, updateBindingParams } from './params.js';
 import { startUi } from './ui-server.js';
 import { State } from './writer.js';
 
@@ -187,6 +187,13 @@ program
     const unknown = servers.filter((s) => !registry.servers.has(s));
     if (unknown.length) {
       throw new LoadoutError(`Unknown shared server(s): ${unknown.join(', ')}. Available: ${[...registry.servers.keys()].join(', ')}`);
+    }
+    for (const s of servers) {
+      const required = requiredParams(registry.servers.get(s)!);
+      const has = registry.bindings.get(repo.id)?.some((b) => b.server === s);
+      if (required.length && !has) {
+        throw new LoadoutError(`${s} needs values for ${required.join(', ')}. Use: loadout set ${s} ${required.map((r) => `${r}=…`).join(' ')} --attach`);
+      }
     }
     const added = attachServers(registry.bindingsPath, repo.id, servers);
     console.log(added.length ? `attached to ${repo.id}: ${added.join(', ')}` : `${repo.id} already has: ${servers.join(', ')}`);

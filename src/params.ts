@@ -3,7 +3,7 @@ import { LoadoutError } from './errors.js';
 import type { Registry } from './registry.js';
 import { repoContext } from './repo.js';
 import { resolveParams } from './resolve.js';
-import type { ParamSpec, ParamValue } from './types.js';
+import type { ParamSpec, ParamValue, ServerDef } from './types.js';
 
 /** Convert raw input (CLI strings or UI values) to the param's type. Empty values mean "unset". */
 export function coerceParam(server: string, name: string, spec: ParamSpec | undefined, raw: unknown): ParamValue | undefined {
@@ -23,6 +23,13 @@ export function coerceParam(server: string, name: string, spec: ParamSpec | unde
     default:
       return String(raw).trim();
   }
+}
+
+/** Params each repository must set before the server can be attached (required, no default). */
+export function requiredParams(def: ServerDef): string[] {
+  return Object.entries(def.params ?? {})
+    .filter(([, spec]) => spec.required && spec.default === undefined)
+    .map(([name]) => name);
 }
 
 /**

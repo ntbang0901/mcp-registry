@@ -17,13 +17,14 @@ import {
   type AddEntry,
   type FormInput,
 } from './add.js';
-import { updateBindingParams } from './params.js';
+import { requiredParams, updateBindingParams } from './params.js';
 import { attachServers, detachServers } from './bindings-edit.js';
 import { stateDir, type Config } from './config.js';
 import { LoadoutError } from './errors.js';
 import { knownRepos, loadRegistry, loadValidRegistry, type Registry } from './registry.js';
-import { detectRepo, findGitRepos, normalizeRepoId } from './repo.js';
-import { repoStatus, syncRepo } from './sync.js';
+import { detectRepo, findGitRepos, normalizeRepoId, repoContext } from './repo.js';
+import { resolveRepo, repoStatus, syncRepo } from './sync.js';
+import { secretEnvNames } from './resolve.js';
 import type { RepoContext, ServerDef } from './types.js';
 import { State } from './writer.js';
 
@@ -60,14 +61,28 @@ function localClones(config: Config): Map<string, RepoContext[]> {
   return clones;
 }
 
-function summarizeStatus(registry: Registry, repo: RepoContext, config: Config, state: State): string {
+function cloneStatus(registry: Registry, repo: RepoContext, config: Config, state: State) {
   try {
-    const statuses = repoStatus(registry, repo, config.targets, state).files.map((f) => f.status);
-    if (statuses.includes('modified')) return 'hand-written';
-    if (statuses.some((s) => s === 'missing' || s === 'stale' || s === 'orphan')) return 'out of sync';
-    return 'synced';
+    const files = repoStatus(registry, repo, config.targets, state).files;
+    const statuses = files.map((f) => f.status);
+    const status = statuses.includes('modified')
+      ? 'hand-written'
+      : statuses.some((s) => s === 'missing' || s === 'stale' || s === 'orphan')
+        ? 'out of sync'
+        : 'synced';
+    return { path: repo.root, status, files };
   } catch (e) {
-    return `error: ${(e as Error).message}`;
+    return { path: repo.root, status: 'error', error: (e as Error).message, files: [] };
+  }
+}
+
+/** Secret env vars a repository's servers read, and whether the shell running the UI has them. */
+function repoEnv(registry: Registry, id: string, root: string) {
+  try {
+    const names = [...new Set(resolveRepo(registry, repoContext(id, root)).flatMap(secretEnvNames))].sort();
+    return names.map((name) => ({ name, set: !!process.env[name] }));
+  } catch {
+    return [];
   }
 }
 
@@ -103,7 +118,10 @@ function buildState(opts: UiOptions): Json {
     servers: (registry.bindings.get(id) ?? []).map((b) => b.server),
     own: [...(registry.repoServers.get(id)?.keys() ?? [])],
     params: Object.fromEntries((registry.bindings.get(id) ?? []).map((b) => [b.server, b.params])),
-    clones: (clones.get(id) ?? []).map((c) => ({ path: c.root, status: valid ? summarizeStatus(registry, c, opts.config, state) : 'registry has errors' })),
+    clones: (clones.get(id) ?? []).map((c) =>
+      valid ? cloneStatus(registry, c, opts.config, state) : { path: c.root, status: 'error', error: 'The registry has errors', files: [] },
+    ),
+    env: valid ? repoEnv(registry, id, clones.get(id)?.[0]?.root ?? '/repo') : [],
   }));
   const known = new Set(knownRepos(registry));
   const unregistered = [...clones].filter(([id]) => !known.has(id)).map(([id, cs]) => ({ id, path: cs[0].root }));
@@ -169,17 +187,23 @@ async function handleApi(req: IncomingMessage, url: URL, body: Json, opts: UiOpt
       const { entries, name, description, repo } = addEntries(body);
       const preview = previewAdd(reg, entries, { name, description, repo });
       const written = commitAdd(reg, preview, { overwrite: body.overwrite === true });
-      if (repo) return { written, attached: [repo] };
-      const attachTo = Array.isArray(body.attach) ? body.attach.map(String) : [];
-      for (const repo of attachTo) attachServers(reg.bindingsPath, normalizeRepoId(repo), written);
-      return { written, attached: attachTo };
+      if (repo) return { written, attached: [repo], needsParams: [] };
+      // Servers with required params are attached later, from the repository, once values are entered.
+      const fresh = loadRegistry(opts.registryRoot).registry;
+      const ready = written.filter((n) => !requiredParams(fresh.servers.get(n)!).length);
+      const attachTo = (Array.isArray(body.attach) ? body.attach.map(String) : []).map((r) => normalizeRepoId(r));
+      for (const r of attachTo) if (ready.length) attachServers(reg.bindingsPath, r, ready);
+      return { written, attached: ready.length ? attachTo : [], needsParams: written.length > ready.length ? attachTo : [] };
     }
     case 'POST /api/bindings': {
       const reg = registry();
       const repo = normalizeRepoId(String(body.repo ?? ''));
       const server = String(body.server ?? '');
       if (body.attached) {
-        if (!reg.servers.has(server)) throw new LoadoutError(`Unknown server "${server}"`);
+        const def = reg.servers.get(server);
+        if (!def) throw new LoadoutError(`Unknown server "${server}"`);
+        const required = requiredParams(def);
+        if (required.length) throw new LoadoutError(`${server} needs values for ${required.join(', ')} before it can be added`);
         attachServers(reg.bindingsPath, repo, [server]);
       } else {
         detachServers(reg.bindingsPath, repo, [server]);

@@ -40,10 +40,11 @@ targets: [claude-code, cursor]     # client cần sinh config
 loadout ui            # mở http://127.0.0.1:4870/?token=… trên trình duyệt
 ```
 
-- **Add MCP server**: dán JSON copy từ README của MCP server (`{"mcpServers": …}`, dạng VS Code `{"servers": …}`, hoặc một entry), hoặc điền form (URL remote / lệnh local + header/env). Có preview file YAML sẽ tạo; API key tự được tách thành biến môi trường, không bao giờ lưu giá trị.
-- **Repositories**: bảng repo × server, tick để gắn/bỏ — clone local được sync lại ngay. Repo local chưa có trong registry hiện ra để thêm bằng 1 click.
-- **Servers**: danh sách server, biến môi trường cần export, số repo đang dùng; xoá server không còn ai dùng.
-- **Commit**: banner báo thay đổi chưa commit trong registry, commit ngay trên UI (push vẫn làm bằng git).
+- **Sidebar**: danh sách repository (chấm màu = trạng thái: xanh đã sync, vàng lệch, đỏ cần xử lý, rỗng = chưa clone trên máy) và server; cuối sidebar là thay đổi chưa commit + nút **Commit**, **Sync all repositories**.
+- **Overview**: việc cần xử lý (repo lệch, file viết tay, thiếu tham số, lỗi registry), bảng repo × server, repo trên máy chưa có trong registry.
+- **Trang repository**: các server đang dùng, tham số của từng server sửa ngay tại chỗ (tham số tuỳ chọn gấp trong *More options*), **+ Add server** (chọn server có sẵn hoặc tạo mới), server riêng của repo, biến môi trường cần export, trạng thái file `.mcp.json` / `.cursor/mcp.json`.
+- **Trang server**: định nghĩa, bảng tham số, repo nào đang dùng với giá trị gì; **Edit definition** (YAML, kiểm tra cả registry trước khi lưu), chuyển dùng chung ↔ riêng, xoá.
+- **New server** (panel bên phải): dán JSON từ README hoặc điền form, xem trước file YAML; chọn dùng chung hay riêng cho một repo. Server có tham số bắt buộc được thêm vào repo sau khi nhập giá trị trên trang repo đó.
 
 UI chỉ lắng nghe trên `127.0.0.1` và yêu cầu token trong URL (in ra khi chạy lệnh), nên trang web khác không gọi được vào nó.
 

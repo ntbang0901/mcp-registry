@@ -9,7 +9,8 @@
   },
   "files": [
     "dist",
-    "schemas"
+    "schemas",
+    "ui"
   ],
   "engines": {
     "node": ">=20"

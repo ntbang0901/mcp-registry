@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { convertEntry } from '../src/importer.js';
 import { ctx } from './helpers.js';
 
-const repo = ctx('github.com/acme/app', '/home/me/code/app');
+const repo = ctx('github.com/acme/app', '/home/me/code/app').root;
 
 describe('convertEntry', () => {
   it('moves a secret in the url query into a secret param and drops the value', () => {

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Command } from 'commander';
+import { commitAdd, entryFromForm, parsePairs, parseServerJson, previewAdd, removeServer, type AddEntry } from './add.js';
 import { attachServers, BINDINGS_HEADER, detachServers } from './bindings-edit.js';
 import { expandHome, loadConfig, parseTargets, resolveRegistryRoot, saveConfig, stateDir, type Config } from './config.js';
 import { LoadoutError } from './errors.js';
@@ -10,6 +12,7 @@ import { BINDINGS_FILE, formatProblems, loadRegistry, loadValidRegistry, SERVERS
 import { detectRepo, findGitRepos, normalizeRepoId, repoContext } from './repo.js';
 import { repoStatus, syncRepo, type SyncResult } from './sync.js';
 import type { RepoContext } from './types.js';
+import { startUi } from './ui-server.js';
 import { State } from './writer.js';
 
 interface GlobalOpts {
@@ -250,6 +253,117 @@ program
       console.log(`  1. review & commit the registry:  git -C ${root} status`);
       console.log('  2. replace the hand-written files: loadout sync --force   (backups: *.bak)');
       console.log('  3. stop tracking them in this repo if they were committed: git rm --cached <file>');
+    }
+  });
+
+interface AddOpts {
+  json?: string;
+  url?: string;
+  header?: string[];
+  env?: string[];
+  description?: string;
+  attach?: boolean;
+  repo?: string;
+  overwrite?: boolean;
+  dryRun?: boolean;
+}
+
+program
+  .command('add')
+  .description('Add MCP server(s) to the registry from pasted JSON, a URL, or a command')
+  .argument('[name]', 'server name (optional when the JSON names its servers)')
+  .argument('[command...]', 'local server command, after --  (e.g. -- uvx code-graph-mcp==1.2.4)')
+  .option('--json <text>', 'MCP JSON config ({"mcpServers": ...} or one entry); also read from stdin')
+  .option('--url <url>', 'remote (HTTP) server URL')
+  .option('--header <k=v...>', 'HTTP header for --url (secrets become env vars)')
+  .option('--env <k=v...>', 'environment variable for a command (secrets become env vars)')
+  .option('--description <text>', 'description')
+  .option('--attach', 'also attach to the current repository (or --repo) and sync it')
+  .option('--repo <id>', 'repository to attach to (implies --attach)')
+  .option('--overwrite', 'replace an existing server definition')
+  .option('--dry-run', 'print the generated definition without writing')
+  .addHelpText(
+    'after',
+    `
+Examples:
+  pbpaste | loadout add                              # JSON copied from a README
+  loadout add context7 --url https://mcp.context7.com/mcp
+  loadout add linkup --url https://mcp.linkup.so/mcp --header "Authorization=Bearer sk-..."
+  loadout add code-graph -- uvx code-graph-mcp==1.2.4 --project-root .`,
+  )
+  .action((name: string | undefined, command: string[], opts: AddOpts, cmd: Command) => {
+    const { config, root: registryRoot } = context(cmd);
+    const { registry } = loadValidRegistry(registryRoot);
+    let entries: AddEntry[];
+    if (opts.url) {
+      entries = [entryFromForm({ name: name ?? '', kind: 'remote', url: opts.url, pairs: opts.header })];
+    } else if (command.length) {
+      entries = [{ name, cfg: { command: command[0], args: command.slice(1), ...(opts.env ? { env: parsePairs(opts.env) } : {}) } }];
+    } else {
+      const text = opts.json ?? (process.stdin.isTTY ? '' : readFileSync(0, 'utf8'));
+      if (!text.trim()) throw new LoadoutError('Give --json, --url, a command after --, or pipe JSON on stdin. See: loadout add --help');
+      entries = parseServerJson(text);
+    }
+    let root: string | undefined; // absolute paths inside the current repo become {{ repo.root }}
+    try {
+      root = detectRepo(process.cwd()).root;
+    } catch {
+      /* not in a repository */
+    }
+    const preview = previewAdd(registry, entries, { name, description: opts.description, root });
+    for (const s of preview.servers) {
+      console.log(`--- servers/${s.name}.yaml${s.exists ? (opts.overwrite ? '  (replaces existing)' : '  (ALREADY EXISTS)') : ''}`);
+      console.log(s.yaml.trimEnd());
+      for (const p of s.problems) console.log(`  ${p.level}: ${p.message}`);
+    }
+    for (const n of preview.notes) console.log(`! ${n}`);
+    if (opts.dryRun) return;
+    const written = commitAdd(registry, preview, { overwrite: opts.overwrite });
+    console.log(`\nadded: ${written.join(', ')}`);
+    const envVars = [...new Set(preview.servers.flatMap((s) => s.envVars))];
+    if (envVars.length) console.log(`export in your shell: ${envVars.join(', ')}`);
+    if (opts.attach || opts.repo) {
+      const { repo, isCwd } = targetRepo(opts.repo);
+      const added = attachServers(registry.bindingsPath, repo.id, written);
+      console.log(`attached to ${repo.id}: ${added.join(', ') || '(already attached)'}`);
+      if (isCwd) runSync(loadValidRegistry(registryRoot).registry, [repo], config, {});
+    }
+    console.log(`\nremember to commit the registry: git -C ${registryRoot} add -A && git -C ${registryRoot} commit -m "add ${written.join(', ')}"`);
+  });
+
+program
+  .command('remove')
+  .description('Delete a server definition from the registry (must not be attached anywhere)')
+  .argument('<name>', 'server name')
+  .action((name: string, _opts: unknown, cmd: Command) => {
+    const { root } = context(cmd);
+    removeServer(loadValidRegistry(root).registry, name);
+    console.log(`removed servers/${name}.yaml`);
+  });
+
+program
+  .command('ui')
+  .description('Open a local web UI to add servers and attach them to repositories')
+  .option('--port <port>', 'port to listen on (0 = random)', '4870')
+  .option('--no-open', 'do not open a browser')
+  .action(async (opts: { port: string; open: boolean }, cmd: Command) => {
+    const { config, root } = context(cmd);
+    const port = Number(opts.port);
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new LoadoutError(`Invalid port "${opts.port}"`);
+    let ui;
+    try {
+      ui = await startUi({ registryRoot: root, config, port });
+    } catch (e) {
+      if ((e as { code?: string }).code === 'EADDRINUSE') throw new LoadoutError(`Port ${port} is in use; try --port 0`);
+      throw e;
+    }
+    console.log(`loadout UI for ${root}`);
+    console.log(`  ${ui.url}`);
+    console.log('  (local only; the token in the URL is required. Ctrl+C to stop)');
+    if (opts.open) {
+      const [bin, args] =
+        process.platform === 'darwin' ? ['open', [ui.url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', ui.url]] : ['xdg-open', [ui.url]];
+      spawn(bin, args as string[], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
     }
   });
 

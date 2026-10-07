@@ -34,6 +34,31 @@ workspaces: [/home/me/code]        # nơi `sync --all` đi tìm repo
 targets: [claude-code, cursor]     # client cần sinh config
 ```
 
+## Giao diện web
+
+```bash
+loadout ui            # mở http://127.0.0.1:4870/?token=… trên trình duyệt
+```
+
+- **Add MCP server**: dán JSON copy từ README của MCP server (`{"mcpServers": …}`, dạng VS Code `{"servers": …}`, hoặc một entry), hoặc điền form (URL remote / lệnh local + header/env). Có preview file YAML sẽ tạo; API key tự được tách thành biến môi trường, không bao giờ lưu giá trị.
+- **Repositories**: bảng repo × server, tick để gắn/bỏ — clone local được sync lại ngay. Repo local chưa có trong registry hiện ra để thêm bằng 1 click.
+- **Servers**: danh sách server, biến môi trường cần export, số repo đang dùng; xoá server không còn ai dùng.
+- **Commit**: banner báo thay đổi chưa commit trong registry, commit ngay trên UI (push vẫn làm bằng git).
+
+UI chỉ lắng nghe trên `127.0.0.1` và yêu cầu token trong URL (in ra khi chạy lệnh), nên trang web khác không gọi được vào nó.
+
+## Thêm server bằng CLI
+
+```bash
+pbpaste | loadout add                                   # JSON copy từ README
+loadout add context7 --url https://mcp.context7.com/mcp
+loadout add linkup --url https://mcp.linkup.so/mcp --header "Authorization=Bearer sk-..."   # key → ${LINKUP_TOKEN}
+loadout add code-graph -- uvx code-graph-mcp==1.2.4 --project-root .
+loadout add linkup --url … --attach                     # thêm và gắn luôn vào repo hiện tại
+loadout add … --dry-run                                 # chỉ xem file sẽ tạo
+loadout remove <name>                                   # xoá server không còn repo nào dùng
+```
+
 ## Dùng hằng ngày
 
 ```bash

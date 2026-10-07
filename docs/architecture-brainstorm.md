@@ -984,6 +984,8 @@ Không commit gì liên quan MCP. `loadout sync` (chạy trong repo) nhận di�
 | D1 | Nguồn sự thật mapping | `bindings.yaml` trung tâm |
 | D2 | File sinh ra | Không commit; ignore qua `.git/info/exclude` |
 
-Lệnh có trong v0.1: `init`, `sync [--all] [--force] [--dry-run]`, `status [--all]`, `attach`, `detach`, `matrix`, `import`, `validate`.
+Lệnh có trong v0.1: `init`, `add`, `remove`, `ui`, `sync [--all] [--force] [--dry-run]`, `status [--all]`, `attach`, `detach`, `matrix`, `import`, `validate`.
+
+**Thêm server không cần viết YAML:** `loadout add` (JSON dán từ README / `--url` / `-- <command>`) và `loadout ui` (web UI local: form + dán JSON có preview, ma trận repo × server, sync, commit). UI là server HTTP chỉ bind `127.0.0.1`, mọi request cần token ngẫu nhiên theo phiên và Host header phải là local (chống CSRF / DNS rebinding). Git vẫn là nguồn sự thật — UI chỉ sửa file trong registry.
 
 Chưa làm (theo thứ tự ưu tiên đề xuất): secret provider ngoài `env://` (1Password / keychain) và launcher `loadout exec`; smoke test server trong CI (`initialize` + `tools/list`); adapter VS Code / Codex; profile; lockfile + version theo server; environment overlay.

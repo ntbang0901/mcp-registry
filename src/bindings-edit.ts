@@ -46,6 +46,7 @@ export function attachServers(path: string, id: string, servers: string[]): stri
   const doc = loadDoc(path);
   const repos = doc.get('repositories') as YAMLMap;
   let pair = findRepoPair(repos, id);
+  const created = !pair;
   if (!pair) {
     const seq = new YAMLSeq();
     seq.flow = true;
@@ -64,7 +65,7 @@ export function attachServers(path: string, id: string, servers: string[]): stri
     }
     for (const s of added) (pair.value as YAMLSeq).add(s);
   }
-  if (added.length) writeFileSync(path, doc.toString(STRINGIFY));
+  if (added.length || created) writeFileSync(path, doc.toString(STRINGIFY));
   return added;
 }
 

@@ -27,7 +27,8 @@ function envName(s: string): string {
 
 interface ConvertContext {
   server: string;
-  repo: RepoContext;
+  /** Repository root; absolute paths under it become {{ repo.root }}. */
+  root?: string;
   params: Record<string, ParamSpec>;
   notes: string[];
 }
@@ -46,7 +47,7 @@ function secretParam(ctx: ConvertContext, value: string, suggested: string, wher
 /** Make a non-secret value portable: workspace/repo paths become {{ repo.root }}. */
 function portable(ctx: ConvertContext, value: string, where: string): string {
   let out = value.replaceAll('${workspaceFolder}', '{{ repo.root }}');
-  if (ctx.repo.root.length > 1) out = out.replaceAll(ctx.repo.root, '{{ repo.root }}');
+  if (ctx.root && ctx.root.length > 1) out = out.replaceAll(ctx.root, '{{ repo.root }}');
   if (/\$\{[^}]+\}/.test(out)) ctx.notes.push(`${ctx.server}: ${where} keeps a client-specific variable (${value}); check it works in every client`);
   return out;
 }
@@ -135,21 +136,22 @@ function convertHttp(ctx: ConvertContext, cfg: Record<string, unknown>): HttpTra
 
 const KNOWN_FIELDS = new Set(['type', 'command', 'args', 'env', 'url', 'headers']);
 
-export function convertEntry(rawName: string, cfg: Record<string, unknown>, repo: RepoContext) {
+/** Convert one client config entry (Claude Code / Cursor / VS Code shape) into a server definition. */
+export function convertEntry(rawName: string, cfg: Record<string, unknown>, root?: string) {
   const name = normalizeServerName(rawName);
-  const ctx: ConvertContext = { server: name, repo, params: {}, notes: [] };
+  const ctx: ConvertContext = { server: name, root, params: {}, notes: [] };
   if (name !== rawName) ctx.notes.push(`"${rawName}" renamed to "${name}"`);
   for (const k of Object.keys(cfg)) if (!KNOWN_FIELDS.has(k)) ctx.notes.push(`${name}: field "${k}" is not supported and was ignored`);
   let transport: ServerDef['transport'];
   if (typeof cfg.url === 'string') transport = convertHttp(ctx, cfg);
   else if (typeof cfg.command === 'string') transport = convertStdio(ctx, cfg);
   else throw new LoadoutError(`${rawName}: neither "command" nor "url" is set`);
-  const def: ServerDef = { name, description: `Imported from ${repo.id}`, transport };
+  const def: ServerDef = { name, transport };
   if (Object.keys(ctx.params).length) def.params = ctx.params;
   return { def, notes: ctx.notes };
 }
 
-const comparable = (d: ServerDef) => JSON.stringify({ transport: d.transport, params: d.params ?? {} });
+export const comparable = (d: ServerDef) => JSON.stringify({ transport: d.transport, params: d.params ?? {} });
 
 export interface ImportResult {
   sources: string[];
@@ -174,7 +176,8 @@ export function importRepo(registry: Registry, repo: RepoContext, opts: { dryRun
     }
     result.sources.push(adapter.path);
     for (const [rawName, cfg] of Object.entries(json.mcpServers ?? {})) {
-      const { def, notes } = convertEntry(rawName, cfg, repo);
+      const { def, notes } = convertEntry(rawName, cfg, repo.root);
+      def.description = `Imported from ${repo.id}`;
       const previous = found.get(def.name);
       if (previous) {
         if (comparable(previous) !== comparable(def)) result.notes.push(`${def.name}: differs between client files; using the first one`);

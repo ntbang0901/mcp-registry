@@ -112,9 +112,28 @@ function lintServer(def: ServerDef, file: string, problems: Problem[]) {
   }
 }
 
+/**
+ * Validate one server definition (schema + lint). `expectedName` is the file name it will be stored under.
+ */
+export function checkServer(data: unknown, file: string, expectedName?: string): Problem[] {
+  const problems: Problem[] = [];
+  const validate = getValidators().server;
+  if (!validate(data)) {
+    for (const m of schemaMessages(validate.errors)) problems.push({ level: 'error', file, message: m });
+    return problems;
+  }
+  const def = data as ServerDef;
+  if (expectedName !== undefined && def.name !== expectedName) {
+    problems.push({ level: 'error', file, message: `name "${def.name}" must match the file name "${expectedName}"` });
+    return problems;
+  }
+  lintServer(def, file, problems);
+  return problems;
+}
+
 export function loadRegistry(root: string): { registry: Registry; problems: Problem[] } {
   const problems: Problem[] = [];
-  const { server: validateServer, bindings: validateBindings } = getValidators();
+  const { bindings: validateBindings } = getValidators();
   const rel = (f: string) => relative(root, f) || f;
 
   const servers = new Map<string, ServerDef>();
@@ -127,17 +146,10 @@ export function loadRegistry(root: string): { registry: Registry; problems: Prob
       const file = join(serversDir, f);
       const data = parseYaml(file, problems);
       if (data === undefined) continue;
-      if (!validateServer(data)) {
-        for (const m of schemaMessages(validateServer.errors)) problems.push({ level: 'error', file: rel(file), message: m });
-        continue;
-      }
-      const def = data as ServerDef;
       const expected = basename(f).replace(/\.ya?ml$/, '');
-      if (def.name !== expected) {
-        problems.push({ level: 'error', file: rel(file), message: `name "${def.name}" must match the file name "${expected}"` });
-        continue;
-      }
-      lintServer(def, rel(file), problems);
+      problems.push(...checkServer(data, rel(file), expected));
+      const def = data as ServerDef;
+      if (!getValidators().server(data) || def.name !== expected) continue;
       servers.set(def.name, def);
     }
   }

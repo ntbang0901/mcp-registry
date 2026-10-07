@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const bin = process.env.LOADOUT_BIN || new URL('../dist/cli.js', import.meta.url).pathname;
-const registrySource = resolve(process.argv[2] || '.');
+const source = process.argv[2] || '.';
+// A git URL (https://…, git@host:…) is passed through; anything else is a local path.
+const registrySource = /^[\w+-]+:\/\/|^[\w.-]+@[^:]+:/.test(source) ? source : resolve(source);
 const tmp = mkdtempSync(join(tmpdir(), 'loadout-smoke-'));
 const env = {
   ...process.env,

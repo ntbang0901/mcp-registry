@@ -12,6 +12,7 @@ describe('ui server', () => {
 
   beforeAll(async () => {
     process.env.LOADOUT_STATE_DIR = join(root, 'state');
+    process.env.LOADOUT_CONFIG = join(root, 'config.yaml');
     write(root, 'servers/linkup.yaml', 'name: linkup\ntransport: { type: http, url: https://mcp.linkup.so/mcp }\n');
     write(root, 'bindings.yaml', 'repositories: {}\n');
     ui = await startUi({ registryRoot: root, config: { workspaces: [], targets: ['claude-code'] }, port: 0 });
@@ -72,6 +73,16 @@ describe('ui server', () => {
     });
     expect(detach.status).toBe(200);
     expect((await call('/api/servers/ctx', { method: 'DELETE' })).status).toBe(200);
+  });
+
+  it('adds and removes scanned folders', async () => {
+    const post = (body: unknown) => call('/api/workspaces', { method: 'POST', body: JSON.stringify(body) });
+    const missing = await post({ add: join(root, 'nope') });
+    expect((await missing.json()).error).toMatch(/is not a folder/);
+    const added = await (await post({ add: root })).json();
+    expect(added.workspaces).toEqual([root]);
+    expect((await (await post({ add: join(root, 'servers') })).json()).note).toMatch(/already scanned as part of/);
+    expect((await (await post({ remove: root })).json()).workspaces).toEqual([]);
   });
 
   it('sets per-repository params and edits server definitions', async () => {

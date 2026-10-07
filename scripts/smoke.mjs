@@ -120,5 +120,22 @@ check(
 check('nothing left to import', /No hand-written MCP configs/.test(run(['import', '--all'])));
 check('registry valid after bulk import', /0 error\(s\)/.test(run(['validate'])));
 
+// A folder outside the workspaces, holding a project that is not a git repository.
+const other = join(tmp, 'other-projects');
+mkdirSync(join(other, 'Internal Tool'), { recursive: true });
+writeFileSync(
+  join(other, 'Internal Tool', '.mcp.json'),
+  JSON.stringify({ mcpServers: { context7: { type: 'http', url: 'https://mcp.context7.com/mcp' } } }),
+);
+const scanned = run(['import', '--dir', other, '--sync']);
+check('import --dir finds a non-git project', /local\/internal-tool/.test(scanned) && /added workspace/.test(scanned), scanned);
+check('the scanned folder is remembered', readFileSync(env.LOADOUT_CONFIG, 'utf8').includes('other-projects'));
+check(
+  'a non-git project is synced',
+  readFileSync(join(other, 'Internal Tool', '.mcp.json'), 'utf8').includes('mcpServers') &&
+    existsSync(join(other, 'Internal Tool', '.cursor', 'mcp.json')),
+);
+check('sync --all includes it', /local\/internal-tool/.test(run(['sync', '--all'])));
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nall smoke checks passed');
 process.exit(failures ? 1 : 0);

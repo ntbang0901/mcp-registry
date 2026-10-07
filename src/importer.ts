@@ -4,7 +4,7 @@ import { ADAPTERS } from './adapters/index.js';
 import { attachServers } from './bindings-edit.js';
 import { LoadoutError } from './errors.js';
 import { SECRET_NAME, serverFileContent, serverPath, type Registry } from './registry.js';
-import { detectRepo, findGitRepos } from './repo.js';
+import { findProjects } from './repo.js';
 import type { HttpTransportDef, ParamSpec, RepoContext, ServerDef, StdioTransportDef } from './types.js';
 import type { State } from './writer.js';
 
@@ -321,16 +321,13 @@ export interface ImportCandidate {
 }
 
 /** Repositories under the workspaces with hand-written MCP client configs. */
-export function findImportCandidates(registry: Registry, workspaces: string[], state?: State): ImportCandidate[] {
-  const repos: RepoContext[] = [];
-  for (const dir of findGitRepos(workspaces)) {
-    try {
-      repos.push(detectRepo(dir));
-    } catch {
-      /* no remote */
-    }
-  }
-  return importCandidates(registry, repos, state);
+export function findImportCandidates(
+  registry: Registry,
+  dirs: string[],
+  state?: State,
+  workspaces: string[] = dirs,
+): ImportCandidate[] {
+  return importCandidates(registry, findProjects(dirs, workspaces), state);
 }
 
 /** Which of these repositories have hand-written MCP client configs. */

@@ -41,10 +41,9 @@ targets: [claude-code, cursor]     # client cần sinh config
 
 ### Phát hành bản mới của công cụ
 
-```bash
-npm version patch          # hoặc minor / major: tăng version, tạo commit + tag vX.Y.Z
-git push --follow-tags     # CI (release.yml) kiểm tra, build, đóng gói và tạo GitHub Release
-```
+Không cần clone: trên GitHub vào **Actions → release → Run workflow** (branch `main`). Workflow lấy version trong `package.json`, chạy `npm run ci`, đóng gói, cài thử gói rồi tạo tag `vX.Y.Z` và GitHub Release kèm `mcp-loadout.tgz` và checksum. Muốn ra bản mới thì tăng `version` trong `package.json` (sửa ngay trên web GitHub cũng được), merge vào `main`, rồi bấm lại nút đó.
+
+Cách khác, từ máy có clone: `npm version patch && git push --follow-tags`.
 
 Link `releases/latest/download/mcp-loadout.tgz` luôn trỏ tới bản mới nhất; cài lại bằng đúng lệnh ở bước 1 để cập nhật.
 

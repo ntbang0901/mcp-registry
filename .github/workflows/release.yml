@@ -1,28 +1,50 @@
 name: release
 
-# Publish the CLI: bump the version and push the tag.
-#   npm version minor && git push --follow-tags
+# Two ways to publish, neither needs a local clone:
+#   - GitHub → Actions → release → "Run workflow" on main: releases the version in package.json
+#     (creates the vX.Y.Z tag and the GitHub Release).
+#   - Push a tag yourself: npm version patch && git push --follow-tags
+# A Release you created by hand in the GitHub UI for the same tag gets the files attached.
 # Users install it with:
 #   npm install -g https://github.com/ntbang0901/mcp-registry/releases/latest/download/mcp-loadout.tgz
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Tag matches package.json version
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - name: Work out the tag
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version ($tag)"; exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if [ "$GITHUB_REF_NAME" != main ]; then echo "::error::Run the release from main"; exit 1; fi
+            existing="$(git ls-remote origin "refs/tags/$tag^{}" "refs/tags/$tag" | head -1 | cut -f1)"
+            if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "::error::$tag already exists on another commit. Bump the version in package.json first."; exit 1
+            fi
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run ci
@@ -34,6 +56,10 @@ jobs:
           npm install -g ./mcp-loadout.tgz
           LOADOUT_BIN="$(command -v loadout)" node scripts/smoke.mjs .
       - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" mcp-loadout.tgz mcp-loadout.tgz.sha256 --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" mcp-loadout.tgz mcp-loadout.tgz.sha256 --clobber
+          else
+            gh release create "$TAG" mcp-loadout.tgz mcp-loadout.tgz.sha256 --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          fi
+          echo "Released $TAG: $(gh release view "$TAG" --json url --jq .url)"

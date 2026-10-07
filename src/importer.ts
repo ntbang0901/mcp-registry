@@ -1,13 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import YAML from 'yaml';
+import { dirname, join, relative } from 'node:path';
 import { ADAPTERS } from './adapters/index.js';
 import { attachServers } from './bindings-edit.js';
 import { LoadoutError } from './errors.js';
-import { SECRET_NAME, SERVERS_DIR, type Registry } from './registry.js';
+import { SECRET_NAME, serverFileContent, serverPath, type Registry } from './registry.js';
 import type { HttpTransportDef, ParamSpec, RepoContext, ServerDef, StdioTransportDef } from './types.js';
-
-export const SERVER_HEADER = '# yaml-language-server: $schema=../schemas/server.schema.json\n';
 
 const EXACT_VERSION = /^[0-9]+\.[0-9]+(\.[0-9]+)?([-.+][0-9A-Za-z.+-]+)?$/;
 /** ${VAR}, ${env:VAR}, ${VAR:-default} */
@@ -162,7 +159,11 @@ export interface ImportResult {
 }
 
 /** Import the MCP servers configured in a repository's client files into the registry. */
-export function importRepo(registry: Registry, repo: RepoContext, opts: { dryRun?: boolean } = {}): ImportResult {
+export function importRepo(
+  registry: Registry,
+  repo: RepoContext,
+  opts: { dryRun?: boolean; repoOnly?: boolean } = {},
+): ImportResult {
   const result: ImportResult = { sources: [], created: [], reused: [], attached: [], notes: [] };
   const found = new Map<string, ServerDef>();
   for (const adapter of Object.values(ADAPTERS)) {
@@ -190,21 +191,28 @@ export function importRepo(registry: Registry, repo: RepoContext, opts: { dryRun
   if (!result.sources.length) {
     throw new LoadoutError(`No MCP config found in ${repo.root} (looked for ${Object.values(ADAPTERS).map((a) => a.path).join(', ')})`);
   }
+  const scope = opts.repoOnly ? repo.id : undefined;
   for (const def of found.values()) {
-    const existing = registry.servers.get(def.name);
+    const existing = scope ? registry.repoServers.get(scope)?.get(def.name) : registry.servers.get(def.name);
     if (existing) {
       result.reused.push(def.name);
       if (comparable(existing) !== comparable(def)) {
-        result.notes.push(`${def.name}: servers/${def.name}.yaml already exists with a different definition — kept the registry version`);
+        result.notes.push(`${def.name}: ${relative(registry.root, serverPath(registry, def.name, scope))} already exists with a different definition — kept the registry version`);
       }
+      continue;
+    }
+    if (scope && registry.bindings.get(scope)?.some((b) => b.server === def.name)) {
+      result.notes.push(`${def.name}: this repository already uses the shared "${def.name}" — skipped`);
       continue;
     }
     result.created.push(def.name);
     if (!opts.dryRun) {
-      mkdirSync(join(registry.root, SERVERS_DIR), { recursive: true });
-      writeFileSync(join(registry.root, SERVERS_DIR, `${def.name}.yaml`), SERVER_HEADER + YAML.stringify(def));
+      const file = serverPath(registry, def.name, scope);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, serverFileContent(registry, file, def));
     }
   }
+  if (scope) return result; // repository-only servers need no binding
   const names = [...found.keys()];
   if (opts.dryRun) {
     const current = new Set((registry.bindings.get(repo.id) ?? []).map((b) => b.server));

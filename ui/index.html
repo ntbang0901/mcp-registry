@@ -63,6 +63,12 @@
   .pill.err { background: var(--err-bg); color: var(--err); }
   .pill.accent { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
   .chip { display: inline-block; font-family: var(--mono); font-size: 11.5px; padding: 1px 7px; border-radius: 5px; background: var(--warn-bg); color: var(--warn); margin: 2px 4px 2px 0; }
+  .scope { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .scope label { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
+  .scope select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: 12.5px var(--mono); max-width: 100%; }
+  .own-chip { display: inline-block; font-family: var(--mono); font-size: 11.5px; padding: 1px 7px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--border); margin: 2px 4px 2px 0; }
+  .group-head { margin: 18px 0 2px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .group-head .repo { font-family: var(--mono); }
   .attach { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
   .attach label { overflow-wrap: anywhere; display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; font-family: var(--mono); font-size: 12.5px; }
   .row-end { display: flex; justify-content: flex-end; align-items: center; gap: 14px; margin-top: 14px; }
@@ -149,7 +155,12 @@
       </div>
       <div class="preview" id="preview"><div class="muted">The generated definition will appear here.</div></div>
     </div>
-    <div class="attach"><span class="hint">Attach to</span><span id="attach-list" class="muted">no repositories yet</span></div>
+    <div class="scope">
+      <label><input type="radio" name="scope" value="shared" checked> Shared <span class="hint">reusable by any repository</span></label>
+      <label><input type="radio" name="scope" value="repo"> Only for</label>
+      <select id="scope-repo" aria-label="Repository that owns the server"></select>
+    </div>
+    <div class="attach" id="attach-row"><span class="hint">Attach to</span><span id="attach-list" class="muted">no repositories yet</span></div>
     <div class="row-end">
       <label id="overwrite-l" hidden><input type="checkbox" id="overwrite"> Replace existing definition</label>
       <button class="btn primary" id="add-btn" disabled>Add server</button>
@@ -280,7 +291,8 @@ function renderMatrix() {
   if (!state.repos.length) {
     table.replaceChildren(el('tr', {}, el('td', { class: 'empty' }, 'No repositories yet — add one below.')));
   } else {
-    const head = el('tr', {}, el('th', {}, 'Repository'), servers.map((s) => el('th', {}, s)), el('th', {}, 'Local clone'), el('th', {}));
+    const head = el('tr', {}, el('th', {}, 'Repository'), servers.map((s) => el('th', {}, s)),
+      el('th', { title: 'Servers defined only for this repository' }, 'Repo-only'), el('th', {}, 'Local clone'), el('th', {}));
     const rows = state.repos.map((repo) => {
       const cloned = repo.clones.length > 0;
       return el('tr', {},
@@ -289,6 +301,7 @@ function renderMatrix() {
           type: 'checkbox', checked: repo.servers.includes(s), 'aria-label': `${s} for ${repo.id}`,
           onchange: (e) => toggle(repo, s, e.target.checked, e.target),
         }))),
+        el('td', {}, repo.own.length ? repo.own.map((n) => el('span', { class: 'own-chip' }, n)) : el('span', { class: 'hint' }, '—')),
         el('td', {}, cloned ? repo.clones.map((c) => statusPill(c.status)) : el('span', { class: 'pill', title: 'Not found under your workspaces' }, 'not cloned')),
         el('td', {}, cloned ? el('button', { class: 'btn small', onclick: () => sync(repo.id) }, 'Sync') : ''),
       );
@@ -305,10 +318,19 @@ function renderMatrix() {
   }
 }
 
-function renderServers() {
-  const box = $('#servers');
-  if (!state.servers.length) return box.replaceChildren(el('div', { class: 'empty' }, 'No servers yet — add one above.'));
-  box.replaceChildren(...state.servers.map((s) => el('div', { class: 'server' },
+function serverRow(s) {
+  const actions = [];
+  if (s.repo) {
+    actions.push(el('button', { class: 'btn small', title: 'Move to servers/ so other repositories can use it', onclick: () => moveServer('share', s) }, 'Make shared'));
+  } else if (s.usedBy.length === 1) {
+    actions.push(el('button', { class: 'btn small', title: `Move into repos/${s.usedBy[0]}/ — only that repository uses it`, onclick: () => moveServer('unshare', s) }, 'Make repo-only'));
+  }
+  actions.push(el('button', {
+    class: 'btn small danger', disabled: !s.repo && s.usedBy.length > 0,
+    title: s.repo ? `Delete ${s.repo}'s own ${s.name}` : s.usedBy.length ? `Detach from ${s.usedBy.join(', ')} first` : 'Delete this definition',
+    onclick: () => removeServer(s),
+  }, 'Delete'));
+  return el('div', { class: 'server' },
     el('div', {},
       el('div', { class: 'name' }, s.name,
         el('span', { class: 'pill accent' }, s.kind),
@@ -317,18 +339,39 @@ function renderServers() {
       el('div', { class: 'summary' }, s.summary),
       s.envVars.length ? el('div', {}, el('span', { class: 'hint' }, 'needs env: '), s.envVars.map((v) => el('span', { class: 'chip' }, v))) : null,
     ),
-    el('div', { class: 'side' },
-      el('span', { class: 'hint' }, `used by ${s.usedBy.length}`),
-      el('button', {
-        class: 'btn small danger', disabled: s.usedBy.length > 0,
-        title: s.usedBy.length ? `Detach from ${s.usedBy.join(', ')} first` : 'Delete this definition',
-        onclick: () => removeServer(s.name),
-      }, 'Delete'),
-    ),
-  )));
+    el('div', { class: 'side' }, s.repo ? null : el('span', { class: 'hint' }, `used by ${s.usedBy.length}`), actions),
+  );
+}
+
+function renderServers() {
+  const box = $('#servers');
+  if (!state.servers.length && !state.repoOnly.length) return box.replaceChildren(el('div', { class: 'empty' }, 'No servers yet — add one above.'));
+  const byRepo = new Map();
+  for (const s of state.repoOnly) byRepo.set(s.repo, [...(byRepo.get(s.repo) || []), s]);
+  box.replaceChildren(...[
+    el('div', { class: 'group-head' }, `Shared (${state.servers.length})`),
+    state.servers.length ? state.servers.map(serverRow) : el('div', { class: 'empty' }, 'None.'),
+    [...byRepo].map(([repo, list]) => [
+      el('div', { class: 'group-head' }, 'Only for ', el('span', { class: 'repo' }, repo)),
+      list.map(serverRow),
+    ]),
+  ].flat(3));
+}
+
+function renderScope() {
+  const sel = $('#scope-repo');
+  const current = sel.value;
+  const ids = [...state.repos.map((r) => r.id), ...state.unregistered.map((r) => r.id)];
+  sel.replaceChildren(...ids.map((id) => el('option', { value: id }, id)));
+  if (ids.includes(current)) sel.value = current;
+  const repoScope = document.querySelector('input[name=scope]:checked').value === 'repo';
+  document.querySelector('input[name=scope][value=repo]').disabled = !ids.length;
+  sel.disabled = !repoScope || !ids.length;
+  $('#attach-row').hidden = repoScope;
 }
 
 function renderAttachList() {
+  renderScope();
   const box = $('#attach-list');
   const checked = new Set([...box.querySelectorAll('input:checked')].map((i) => i.value));
   const ids = [...state.repos.map((r) => r.id), ...state.unregistered.map((r) => r.id)];
@@ -340,9 +383,10 @@ function renderAttachList() {
 // ---------- add server ----------
 function addRequest() {
   const description = $('#add-desc').value;
-  if (tab === 'paste') return { mode: 'json', text: $('#paste-text').value, name: $('#paste-name').value, description };
+  const repo = document.querySelector('input[name=scope]:checked').value === 'repo' ? $('#scope-repo').value : undefined;
+  if (tab === 'paste') return { mode: 'json', text: $('#paste-text').value, name: $('#paste-name').value, description, repo };
   const kind = document.querySelector('input[name=kind]:checked').value;
-  return { mode: 'form', description, form: { name: $('#f-name').value, kind, url: $('#f-url').value, command: $('#f-cmd').value, pairs: $('#f-pairs').value } };
+  return { mode: 'form', description, repo, form: { name: $('#f-name').value, kind, url: $('#f-url').value, command: $('#f-cmd').value, pairs: $('#f-pairs').value } };
 }
 
 function inputIsEmpty(req) {
@@ -375,7 +419,7 @@ async function preview() {
     $('#overwrite-l').hidden = !anyExists;
     box.replaceChildren(
       ...p.servers.map((s) => el('div', { class: 'file' },
-        el('div', { class: 'file-head' }, `servers/${s.name}.yaml`, s.exists ? el('span', { class: 'pill warn' }, 'already exists') : el('span', { class: 'pill ok' }, 'new')),
+        el('div', { class: 'file-head' }, s.path, s.exists ? el('span', { class: 'pill warn' }, 'already exists') : el('span', { class: 'pill ok' }, 'new')),
         el('pre', {}, s.yaml),
         s.problems.map((x) => el('div', { class: `msg ${x.level}` }, x.message)),
         s.envVars.length ? el('div', { class: 'msg note' }, 'Export in your shell: ', s.envVars.map((v) => el('span', { class: 'chip' }, v))) : null,
@@ -398,10 +442,10 @@ function updateAddButton() {
 async function addServer() {
   const req = addRequest();
   req.overwrite = $('#overwrite').checked;
-  req.attach = [...document.querySelectorAll('#attach-list input:checked')].map((i) => i.value);
+  if (!req.repo) req.attach = [...document.querySelectorAll('#attach-list input:checked')].map((i) => i.value);
   await guard(async () => {
     const r = await api('POST', '/api/servers', req);
-    toast(`Added ${r.written.join(', ')}${r.attached.length ? ` → ${r.attached.length} repo(s)` : ''}`);
+    toast(req.repo ? `Added ${r.written.join(', ')} for ${req.repo} only` : `Added ${r.written.join(', ')}${r.attached.length ? ` → ${r.attached.length} repo(s)` : ''}`);
     for (const id of ['#paste-text', '#paste-name', '#f-name', '#f-url', '#f-cmd', '#f-pairs', '#add-desc']) $(id).value = '';
     $('#overwrite').checked = false;
     for (const i of document.querySelectorAll('#attach-list input')) i.checked = false;
@@ -435,12 +479,29 @@ async function addRepo(id) {
   });
 }
 
-async function removeServer(name) {
-  if (!confirm(`Delete servers/${name}.yaml?`)) return;
+async function removeServer(s) {
+  const path = s.repo ? `repos/${s.repo}/${s.name}.yaml` : `servers/${s.name}.yaml`;
+  if (!confirm(`Delete ${path}?`)) return;
   await guard(async () => {
-    await api('DELETE', `/api/servers/${encodeURIComponent(name)}`);
-    toast(`Deleted ${name}`);
+    await api('DELETE', `/api/servers/${encodeURIComponent(s.name)}${s.repo ? `?repo=${encodeURIComponent(s.repo)}` : ''}`);
+    toast(`Deleted ${path}`);
     await refresh();
+    if (s.repo) await sync(s.repo, false, true);
+  });
+}
+
+async function moveServer(kind, s) {
+  await guard(async () => {
+    let repo = s.repo;
+    if (kind === 'share') {
+      await api('POST', '/api/share', { repo: s.repo, name: s.name });
+      toast(`${s.name} is now shared (still attached to ${s.repo})`);
+    } else {
+      repo = (await api('POST', '/api/unshare', { name: s.name })).repo;
+      toast(`${s.name} now belongs to ${repo} only`);
+    }
+    await refresh();
+    if (state.repos.find((r) => r.id === repo)?.clones.length) await sync(repo, false, true);
   });
 }
 
@@ -501,6 +562,8 @@ for (const r of document.querySelectorAll('input[name=kind]')) {
   });
 }
 for (const id of ['#paste-text', '#paste-name', '#f-name', '#f-url', '#f-cmd', '#f-pairs', '#add-desc']) $(id).addEventListener('input', schedulePreview);
+for (const r of document.querySelectorAll('input[name=scope]')) r.addEventListener('change', () => { renderScope(); schedulePreview(); });
+$('#scope-repo').addEventListener('change', schedulePreview);
 $('#overwrite').addEventListener('change', updateAddButton);
 $('#add-btn').addEventListener('click', addServer);
 $('#sync-all').addEventListener('click', () => sync(undefined));

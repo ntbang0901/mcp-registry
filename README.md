@@ -47,6 +47,26 @@ loadout ui            # mở http://127.0.0.1:4870/?token=… trên trình duy�
 
 UI chỉ lắng nghe trên `127.0.0.1` và yêu cầu token trong URL (in ra khi chạy lệnh), nên trang web khác không gọi được vào nó.
 
+## Server dùng chung và server riêng của repo
+
+| | Dùng chung | Riêng của một repo |
+|---|---|---|
+| Lưu ở | `servers/<name>.yaml` | `repos/<host>/<owner>/<name>/<server>.yaml` |
+| Gắn vào repo | liệt kê trong `bindings.yaml` (tick trên UI) | tự động — chỉ áp dụng cho repo đó |
+| Khi nào dùng | context7, linkup… nhiều repo cùng dùng | script MCP nằm trong repo, DB riêng, server nội bộ của service đó |
+
+Tên server riêng không đụng với repo khác (repo A và repo B đều có thể có `db` riêng). Chuyển qua lại bất cứ lúc nào:
+
+```bash
+loadout add db --repo-only -- node scripts/db-mcp.js   # tạo server riêng cho repo hiện tại
+loadout import --repo-only                             # nhập config hiện có thành server riêng
+loadout share db                                       # riêng → dùng chung (vẫn gắn vào repo này)
+loadout unshare code-graph                             # dùng chung nhưng chỉ 1 repo dùng → riêng của repo đó
+loadout remove db                                      # xoá server riêng của repo hiện tại
+```
+
+Trên UI: chọn **Only for &lt;repo&gt;** khi thêm server; danh sách server có nút **Make shared** / **Make repo-only**; bảng repo có cột **Repo-only**.
+
 ## Thêm server bằng CLI
 
 ```bash
@@ -56,7 +76,7 @@ loadout add linkup --url https://mcp.linkup.so/mcp --header "Authorization=Beare
 loadout add code-graph -- uvx code-graph-mcp==1.2.4 --project-root .
 loadout add linkup --url … --attach                     # thêm và gắn luôn vào repo hiện tại
 loadout add … --dry-run                                 # chỉ xem file sẽ tạo
-loadout remove <name>                                   # xoá server không còn repo nào dùng
+loadout remove <name>                                   # xoá server dùng chung không còn repo nào dùng
 ```
 
 ## Dùng hằng ngày

@@ -9,17 +9,22 @@ import { applyFile, ensureExcluded, inspectFile, type FileStatus, type Outcome, 
 
 export function resolveRepo(registry: Registry, repo: RepoContext): ResolvedServer[] {
   const bindings = registry.bindings.get(repo.id);
-  if (!bindings) {
+  const own = registry.repoServers.get(repo.id);
+  if (!bindings && !own) {
     throw new LoadoutError(
       `${repo.id} is not in ${registry.bindingsPath}.\n` +
         `  Attach servers with: loadout attach <server...>   or import existing configs with: loadout import`,
     );
   }
-  return bindings.map((b) => {
+  const defs = [
+    ...(bindings ?? []).map((b) => ({ def: registry.servers.get(b.server)!, binding: b })),
+    ...[...(own?.values() ?? [])].map((def) => ({ def, binding: { server: def.name, params: {} } })),
+  ];
+  return defs.map(({ def, binding }) => {
     try {
-      return resolveServer(registry.servers.get(b.server)!, b, repo);
+      return resolveServer(def, binding, repo);
     } catch (e) {
-      throw new LoadoutError(`${repo.id} → ${b.server}: ${(e as Error).message}`);
+      throw new LoadoutError(`${repo.id} → ${binding.server}: ${(e as Error).message}`);
     }
   });
 }

@@ -1,15 +1,16 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { commitAdd, entryFromForm, parseServerJson, previewAdd, removeServer, type AddEntry, type FormInput } from './add.js';
+import { commitAdd, entryFromForm, makeRepoOnly, parseServerJson, previewAdd, removeServer, shareServer, usersOf, type AddEntry, type FormInput } from './add.js';
 import { attachServers, detachServers } from './bindings-edit.js';
 import { stateDir, type Config } from './config.js';
 import { LoadoutError } from './errors.js';
-import { loadRegistry, loadValidRegistry, type Registry } from './registry.js';
+import { knownRepos, loadRegistry, loadValidRegistry, type Registry } from './registry.js';
 import { detectRepo, findGitRepos, normalizeRepoId } from './repo.js';
 import { repoStatus, syncRepo } from './sync.js';
-import type { RepoContext } from './types.js';
+import type { RepoContext, ServerDef } from './types.js';
 import { State } from './writer.js';
 
 export interface UiOptions {
@@ -19,6 +20,9 @@ export interface UiOptions {
 }
 
 type Json = Record<string, unknown>;
+
+/** Registry files the UI edits (and may commit). */
+const REGISTRY_PATHS = ['servers', 'repos', 'bindings.yaml'];
 
 function git(root: string, args: string[]): string | undefined {
   try {
@@ -58,8 +62,7 @@ function buildState(opts: UiOptions): Json {
   const clones = localClones(opts.config);
   const state = State.load(stateDir());
   const valid = !problems.some((p) => p.level === 'error');
-  const usedBy = (name: string) => [...registry.bindings].filter(([, bs]) => bs.some((b) => b.server === name)).map(([id]) => id);
-  const servers = [...registry.servers.values()].map((def) => {
+  const describe = (def: ServerDef, repo?: string) => {
     const t = def.transport;
     const summary =
       t.type === 'http'
@@ -69,23 +72,28 @@ function buildState(opts: UiOptions): Json {
           : [t.command, ...(t.args ?? [])].join(' ');
     return {
       name: def.name,
+      repo: repo ?? null,
       description: def.description ?? '',
       status: def.status ?? '',
       kind: t.type === 'http' ? 'remote' : 'local',
       summary,
       envVars: Object.values(def.params ?? {}).flatMap((p) => (p.type === 'secret' && typeof p.default === 'string' ? [p.default.replace(/^env:\/\//, '')] : [])),
-      usedBy: usedBy(def.name),
+      usedBy: repo ? [repo] : usersOf(registry, def.name),
     };
-  });
-  const repos = [...registry.bindings].map(([id, bindings]) => ({
+  };
+  const servers = [...registry.servers.values()].map((def) => describe(def));
+  const repoOnly = [...registry.repoServers].flatMap(([id, defs]) => [...defs.values()].map((def) => describe(def, id)));
+  const repos = knownRepos(registry).map((id) => ({
     id,
-    servers: bindings.map((b) => b.server),
+    servers: (registry.bindings.get(id) ?? []).map((b) => b.server),
+    own: [...(registry.repoServers.get(id)?.keys() ?? [])],
     clones: (clones.get(id) ?? []).map((c) => ({ path: c.root, status: valid ? summarizeStatus(registry, c, opts.config, state) : 'registry has errors' })),
   }));
-  const unregistered = [...clones].filter(([id]) => !registry.bindings.has(id)).map(([id, cs]) => ({ id, path: cs[0].root }));
+  const known = new Set(knownRepos(registry));
+  const unregistered = [...clones].filter(([id]) => !known.has(id)).map(([id, cs]) => ({ id, path: cs[0].root }));
   let changes: string[] = [];
   try {
-    changes = (git(opts.registryRoot, ['status', '--porcelain', '--', 'servers', 'bindings.yaml']) ?? '').split('\n').filter(Boolean);
+    changes = (git(opts.registryRoot, ['status', '--porcelain', '--', ...REGISTRY_PATHS]) ?? '').split('\n').filter(Boolean);
   } catch {
     /* not a git repo */
   }
@@ -94,6 +102,7 @@ function buildState(opts: UiOptions): Json {
     workspaces: opts.config.workspaces,
     targets: opts.config.targets,
     servers,
+    repoOnly,
     repos,
     unregistered,
     problems,
@@ -101,11 +110,12 @@ function buildState(opts: UiOptions): Json {
   };
 }
 
-function addEntries(body: Json): { entries: AddEntry[]; name?: string; description?: string } {
+function addEntries(body: Json): { entries: AddEntry[]; name?: string; description?: string; repo?: string } {
   const description = typeof body.description === 'string' && body.description.trim() ? body.description.trim() : undefined;
-  if (body.mode === 'form') return { entries: [entryFromForm(body.form as FormInput)], description };
+  const repo = typeof body.repo === 'string' && body.repo ? normalizeRepoId(body.repo) : undefined;
+  if (body.mode === 'form') return { entries: [entryFromForm(body.form as FormInput)], description, repo };
   const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined;
-  return { entries: parseServerJson(String(body.text ?? '')), name, description };
+  return { entries: parseServerJson(String(body.text ?? '')), name, description, repo };
 }
 
 function syncClones(opts: UiOptions, body: Json) {
@@ -114,7 +124,7 @@ function syncClones(opts: UiOptions, body: Json) {
   const state = State.load(stateDir());
   const results = [];
   for (const [id, clones] of localClones(opts.config)) {
-    if (!registry.bindings.has(id) || (only && id !== only)) continue;
+    if (!knownRepos(registry).includes(id) || (only && id !== only)) continue;
     for (const repo of clones) {
       try {
         const r = syncRepo(registry, repo, opts.config.targets, state, { force: body.force === true });
@@ -135,14 +145,15 @@ async function handleApi(req: IncomingMessage, url: URL, body: Json, opts: UiOpt
     case 'GET /api/state':
       return buildState(opts);
     case 'POST /api/preview': {
-      const { entries, name, description } = addEntries(body);
-      return previewAdd(registry(), entries, { name, description });
+      const { entries, name, description, repo } = addEntries(body);
+      return previewAdd(registry(), entries, { name, description, repo });
     }
     case 'POST /api/servers': {
       const reg = registry();
-      const { entries, name, description } = addEntries(body);
-      const preview = previewAdd(reg, entries, { name, description });
+      const { entries, name, description, repo } = addEntries(body);
+      const preview = previewAdd(reg, entries, { name, description, repo });
       const written = commitAdd(reg, preview, { overwrite: body.overwrite === true });
+      if (repo) return { written, attached: [repo] };
       const attachTo = Array.isArray(body.attach) ? body.attach.map(String) : [];
       for (const repo of attachTo) attachServers(reg.bindingsPath, normalizeRepoId(repo), written);
       return { written, attached: attachTo };
@@ -163,16 +174,28 @@ async function handleApi(req: IncomingMessage, url: URL, body: Json, opts: UiOpt
       attachServers(registry().bindingsPath, normalizeRepoId(String(body.repo ?? '')), []);
       return { ok: true };
     }
+    case 'POST /api/share': {
+      shareServer(registry(), normalizeRepoId(String(body.repo ?? '')), String(body.name ?? ''));
+      return { ok: true };
+    }
+    case 'POST /api/unshare': {
+      return { repo: makeRepoOnly(registry(), String(body.name ?? ''), body.repo ? normalizeRepoId(String(body.repo)) : undefined) };
+    }
     case 'POST /api/sync':
       return syncClones(opts, body);
     case 'POST /api/commit': {
       const message = String(body.message ?? '').trim() || 'Update MCP registry';
-      git(opts.registryRoot, ['add', '--', 'servers', 'bindings.yaml']);
-      return { output: git(opts.registryRoot, ['commit', '-m', message, '--', 'servers', 'bindings.yaml'])?.trim() };
+      // -A stages deletions too. Skip paths that neither exist nor are tracked (e.g. no repos/ yet).
+      const paths = REGISTRY_PATHS.filter(
+        (p) => existsSync(join(opts.registryRoot, p)) || git(opts.registryRoot, ['ls-files', '--', p])?.trim(),
+      );
+      git(opts.registryRoot, ['add', '-A', '--', ...paths]);
+      return { output: git(opts.registryRoot, ['commit', '-m', message, '--', ...paths])?.trim() };
     }
   }
   if (req.method === 'DELETE' && url.pathname.startsWith('/api/servers/')) {
-    removeServer(registry(), decodeURIComponent(url.pathname.slice('/api/servers/'.length)));
+    const repo = url.searchParams.get('repo');
+    removeServer(registry(), decodeURIComponent(url.pathname.slice('/api/servers/'.length)), repo ? normalizeRepoId(repo) : undefined);
     return { ok: true };
   }
   return undefined;

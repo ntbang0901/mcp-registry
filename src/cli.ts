@@ -3,12 +3,12 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Command } from 'commander';
-import { commitAdd, entryFromForm, parsePairs, parseServerJson, previewAdd, removeServer, type AddEntry } from './add.js';
+import { commitAdd, entryFromForm, makeRepoOnly, parsePairs, parseServerJson, previewAdd, removeServer, shareServer, type AddEntry } from './add.js';
 import { attachServers, BINDINGS_HEADER, detachServers } from './bindings-edit.js';
 import { expandHome, loadConfig, parseTargets, resolveRegistryRoot, saveConfig, stateDir, type Config } from './config.js';
 import { LoadoutError } from './errors.js';
 import { importRepo } from './importer.js';
-import { BINDINGS_FILE, formatProblems, loadRegistry, loadValidRegistry, SERVERS_DIR, type Registry } from './registry.js';
+import { BINDINGS_FILE, formatProblems, knownRepos, loadRegistry, loadValidRegistry, SERVERS_DIR, type Registry } from './registry.js';
 import { detectRepo, findGitRepos, normalizeRepoId, repoContext } from './repo.js';
 import { repoStatus, syncRepo, type SyncResult } from './sync.js';
 import type { RepoContext } from './types.js';
@@ -45,13 +45,13 @@ function localClones(registry: Registry, config: Config): { clones: RepoContext[
   for (const dir of findGitRepos(config.workspaces)) {
     try {
       const repo = detectRepo(dir);
-      if (registry.bindings.has(repo.id)) clones.push(repo);
+      if (knownRepos(registry).includes(repo.id)) clones.push(repo);
     } catch {
       /* repo without remote: not ours */
     }
   }
   const seen = new Set(clones.map((c) => c.id));
-  return { clones, notCloned: [...registry.bindings.keys()].filter((id) => !seen.has(id)) };
+  return { clones, notCloned: knownRepos(registry).filter((id) => !seen.has(id)) };
 }
 
 const OUTCOME_LABEL: Record<string, string> = {
@@ -180,11 +180,13 @@ program
   .action((servers: string[], opts: { repo?: string; sync: boolean }, cmd: Command) => {
     const { config, root } = context(cmd);
     const { registry } = loadValidRegistry(root);
+    const { repo, isCwd } = targetRepo(opts.repo);
+    const own = servers.filter((s) => registry.repoServers.get(repo.id)?.has(s));
+    if (own.length) throw new LoadoutError(`${own.join(', ')}: already active for ${repo.id} as repository-only server(s)`);
     const unknown = servers.filter((s) => !registry.servers.has(s));
     if (unknown.length) {
-      throw new LoadoutError(`Unknown server(s): ${unknown.join(', ')}. Available: ${[...registry.servers.keys()].join(', ')}`);
+      throw new LoadoutError(`Unknown shared server(s): ${unknown.join(', ')}. Available: ${[...registry.servers.keys()].join(', ')}`);
     }
-    const { repo, isCwd } = targetRepo(opts.repo);
     const added = attachServers(registry.bindingsPath, repo.id, servers);
     console.log(added.length ? `attached to ${repo.id}: ${added.join(', ')}` : `${repo.id} already has: ${servers.join(', ')}`);
     const reloaded = loadRegistry(root);
@@ -221,23 +223,25 @@ program
     const { root } = context(cmd);
     const { registry } = loadValidRegistry(root);
     const servers = [...registry.servers.keys()];
-    const repos = [...registry.bindings.keys()];
-    if (!repos.length) return console.log('No repositories in bindings.yaml yet.');
+    const repos = knownRepos(registry);
+    if (!repos.length) return console.log('No repositories in the registry yet.');
     const width = Math.max('repository'.length, ...repos.map((r) => r.length));
-    console.log(['repository'.padEnd(width), ...servers].join('  '));
+    console.log(['repository'.padEnd(width), ...servers, 'repo-only'].join('  '));
     for (const id of repos) {
-      const used = new Set(registry.bindings.get(id)!.map((b) => b.server));
-      console.log([id.padEnd(width), ...servers.map((s) => (used.has(s) ? '✓' : '·').padEnd(s.length))].join('  ').trimEnd());
+      const used = new Set((registry.bindings.get(id) ?? []).map((b) => b.server));
+      const own = [...(registry.repoServers.get(id)?.keys() ?? [])].join(', ');
+      console.log([id.padEnd(width), ...servers.map((s) => (used.has(s) ? '✓' : '·').padEnd(s.length)), own].join('  ').trimEnd());
     }
-    const unused = servers.filter((s) => !repos.some((id) => registry.bindings.get(id)!.some((b) => b.server === s)));
+    const unused = servers.filter((s) => !repos.some((id) => registry.bindings.get(id)?.some((b) => b.server === s)));
     if (unused.length) console.log(`\nunused servers: ${unused.join(', ')}`);
   });
 
 program
   .command('import')
   .description("Import the current repository's existing .mcp.json / .cursor/mcp.json into the registry")
+  .option('--repo-only', "import as this repository's own servers (repos/<repo>/) instead of shared ones")
   .option('--dry-run', 'show what would be imported without writing')
-  .action((opts: { dryRun?: boolean }, cmd: Command) => {
+  .action((opts: { dryRun?: boolean; repoOnly?: boolean }, cmd: Command) => {
     const { root } = context(cmd);
     const { registry } = loadValidRegistry(root);
     const repo = detectRepo(process.cwd());
@@ -246,7 +250,8 @@ program
     console.log(`  read:     ${r.sources.join(', ')}`);
     console.log(`  new:      ${r.created.join(', ') || '-'}`);
     console.log(`  existing: ${r.reused.join(', ') || '-'}`);
-    console.log(`  attached: ${r.attached.join(', ') || '-'}`);
+    if (opts.repoOnly) console.log(`  stored in: repos/${repo.id}/ (active for this repository only)`);
+    else console.log(`  attached: ${r.attached.join(', ') || '-'}`);
     for (const n of r.notes) console.log(`  ! ${n}`);
     if (!opts.dryRun) {
       console.log('\nnext:');
@@ -264,6 +269,7 @@ interface AddOpts {
   description?: string;
   attach?: boolean;
   repo?: string;
+  repoOnly?: boolean;
   overwrite?: boolean;
   dryRun?: boolean;
 }
@@ -279,7 +285,8 @@ program
   .option('--env <k=v...>', 'environment variable for a command (secrets become env vars)')
   .option('--description <text>', 'description')
   .option('--attach', 'also attach to the current repository (or --repo) and sync it')
-  .option('--repo <id>', 'repository to attach to (implies --attach)')
+  .option('--repo <id>', 'repository to attach to (implies --attach), or owner of a --repo-only server')
+  .option('--repo-only', 'make it the repository\'s own server (repos/<repo>/), not shared')
   .option('--overwrite', 'replace an existing server definition')
   .option('--dry-run', 'print the generated definition without writing')
   .addHelpText(
@@ -289,7 +296,8 @@ Examples:
   pbpaste | loadout add                              # JSON copied from a README
   loadout add context7 --url https://mcp.context7.com/mcp
   loadout add linkup --url https://mcp.linkup.so/mcp --header "Authorization=Bearer sk-..."
-  loadout add code-graph -- uvx code-graph-mcp==1.2.4 --project-root .`,
+  loadout add code-graph -- uvx code-graph-mcp==1.2.4 --project-root .
+  loadout add db --repo-only -- npx -y @acme/pg-mcp@1.0.0     # only for the current repository`,
   )
   .action((name: string | undefined, command: string[], opts: AddOpts, cmd: Command) => {
     const { config, root: registryRoot } = context(cmd);
@@ -310,9 +318,10 @@ Examples:
     } catch {
       /* not in a repository */
     }
-    const preview = previewAdd(registry, entries, { name, description: opts.description, root });
+    const owner = opts.repoOnly ? targetRepo(opts.repo) : undefined;
+    const preview = previewAdd(registry, entries, { name, description: opts.description, root, repo: owner?.repo.id });
     for (const s of preview.servers) {
-      console.log(`--- servers/${s.name}.yaml${s.exists ? (opts.overwrite ? '  (replaces existing)' : '  (ALREADY EXISTS)') : ''}`);
+      console.log(`--- ${s.path}${s.exists ? (opts.overwrite ? '  (replaces existing)' : '  (ALREADY EXISTS)') : ''}`);
       console.log(s.yaml.trimEnd());
       for (const p of s.problems) console.log(`  ${p.level}: ${p.message}`);
     }
@@ -322,7 +331,10 @@ Examples:
     console.log(`\nadded: ${written.join(', ')}`);
     const envVars = [...new Set(preview.servers.flatMap((s) => s.envVars))];
     if (envVars.length) console.log(`export in your shell: ${envVars.join(', ')}`);
-    if (opts.attach || opts.repo) {
+    if (owner) {
+      console.log(`active for ${owner.repo.id} only`);
+      if (owner.isCwd) runSync(loadValidRegistry(registryRoot).registry, [owner.repo], config, {});
+    } else if (opts.attach || opts.repo) {
       const { repo, isCwd } = targetRepo(opts.repo);
       const added = attachServers(registry.bindingsPath, repo.id, written);
       console.log(`attached to ${repo.id}: ${added.join(', ') || '(already attached)'}`);
@@ -333,12 +345,46 @@ Examples:
 
 program
   .command('remove')
-  .description('Delete a server definition from the registry (must not be attached anywhere)')
+  .description('Delete a shared server (must not be attached anywhere), or a repository-only server with --repo')
   .argument('<name>', 'server name')
-  .action((name: string, _opts: unknown, cmd: Command) => {
+  .option('--repo <id>', "delete this repository's own server (default: current repository if it has one)")
+  .action((name: string, opts: { repo?: string }, cmd: Command) => {
     const { root } = context(cmd);
-    removeServer(loadValidRegistry(root).registry, name);
-    console.log(`removed servers/${name}.yaml`);
+    const { registry } = loadValidRegistry(root);
+    let repo = opts.repo ? normalizeRepoId(opts.repo) : undefined;
+    if (!repo && !registry.servers.has(name)) {
+      try {
+        const cwd = detectRepo(process.cwd()).id;
+        if (registry.repoServers.get(cwd)?.has(name)) repo = cwd;
+      } catch {
+        /* not in a repository */
+      }
+    }
+    removeServer(registry, name, repo);
+    console.log(`removed ${repo ? `repos/${repo}` : 'servers'}/${name}.yaml`);
+  });
+
+program
+  .command('share')
+  .description("Turn a repository's own server into a shared one (it stays attached to that repository)")
+  .argument('<name>', 'server name')
+  .option('--repo <id>', 'owning repository (default: current repository)')
+  .action((name: string, opts: { repo?: string }, cmd: Command) => {
+    const { root } = context(cmd);
+    const { repo } = targetRepo(opts.repo);
+    shareServer(loadValidRegistry(root).registry, repo.id, name);
+    console.log(`moved repos/${repo.id}/${name}.yaml → servers/${name}.yaml (still attached to ${repo.id})`);
+  });
+
+program
+  .command('unshare')
+  .description('Turn a shared server used by a single repository into that repository\'s own server')
+  .argument('<name>', 'server name')
+  .option('--repo <id>', 'repository that should own it (default: the one using it)')
+  .action((name: string, opts: { repo?: string }, cmd: Command) => {
+    const { root } = context(cmd);
+    const target = makeRepoOnly(loadValidRegistry(root).registry, name, opts.repo ? normalizeRepoId(opts.repo) : undefined);
+    console.log(`moved servers/${name}.yaml → repos/${target}/${name}.yaml`);
   });
 
 program
@@ -377,7 +423,8 @@ program
     if (problems.length) console.log(formatProblems(problems));
     const errors = problems.filter((p) => p.level === 'error').length;
     console.log(
-      `${registry.servers.size} server(s), ${registry.bindings.size} repositor${registry.bindings.size === 1 ? 'y' : 'ies'}: ` +
+      `${registry.servers.size} shared server(s), ${[...registry.repoServers.values()].reduce((n, m) => n + m.size, 0)} repo-only, ` +
+        `${knownRepos(registry).length} repositor${knownRepos(registry).length === 1 ? 'y' : 'ies'}: ` +
         `${errors} error(s), ${problems.length - errors} warning(s)`,
     );
     if (errors) process.exitCode = 1;

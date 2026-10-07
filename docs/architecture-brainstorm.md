@@ -984,8 +984,22 @@ Không commit gì liên quan MCP. `loadout sync` (chạy trong repo) nhận di�
 | D1 | Nguồn sự thật mapping | `bindings.yaml` trung tâm |
 | D2 | File sinh ra | Không commit; ignore qua `.git/info/exclude` |
 
-Lệnh có trong v0.1: `init`, `add`, `remove`, `ui`, `sync [--all] [--force] [--dry-run]`, `status [--all]`, `attach`, `detach`, `matrix`, `import`, `validate`.
+Lệnh có trong v0.1: `init`, `add [--repo-only]`, `remove`, `share`, `unshare`, `ui`, `sync [--all] [--force] [--dry-run]`, `status [--all]`, `attach`, `detach`, `matrix`, `import`, `validate`.
 
 **Thêm server không cần viết YAML:** `loadout add` (JSON dán từ README / `--url` / `-- <command>`) và `loadout ui` (web UI local: form + dán JSON có preview, ma trận repo × server, sync, commit). UI là server HTTP chỉ bind `127.0.0.1`, mọi request cần token ngẫu nhiên theo phiên và Host header phải là local (chống CSRF / DNS rebinding). Git vẫn là nguồn sự thật — UI chỉ sửa file trong registry.
 
 Chưa làm (theo thứ tự ưu tiên đề xuất): secret provider ngoài `env://` (1Password / keychain) và launcher `loadout exec`; smoke test server trong CI (`initialize` + `tools/list`); adapter VS Code / Codex; profile; lockfile + version theo server; environment overlay.
+
+---
+
+## 23. Server riêng của repo (repository-only)
+
+Bối cảnh: một số MCP chỉ có ý nghĩa với đúng một repo (script MCP nằm trong repo, DB của riêng service, server nội bộ). Đặt chúng vào catalog chung làm catalog phình ra, bảng repo × server thêm cột chỉ có một dấu tick, và tên dễ đụng nhau (`db`).
+
+Quyết định:
+
+- **Vẫn nằm trong registry** (một nguồn sự thật, review/rollback như mọi thứ khác), nhưng ở `repos/<host>/<owner>/<name>/<server>.yaml` — thư mục chính là repo id đã chuẩn hoá.
+- **Không cần binding:** file nằm trong thư mục của repo nào thì server áp dụng cho repo đó. Tên chỉ cần duy nhất trong repo.
+- **Không được trùng tên** với server dùng chung mà repo đó đang gắn (`validate` báo lỗi).
+- **Chuyển phạm vi là thao tác hạng nhất:** `share` (riêng → chung, giữ binding) và `unshare` (chung nhưng chỉ ≤ 1 repo dùng → riêng). Nhờ vậy không phải đoán trước: bắt đầu riêng, khi repo thứ hai cần thì share.
+- Phương án đã loại: để server riêng trong chính repo (file local) — tiện cho thay đổi theo branch nhưng tạo nguồn sự thật thứ hai cho danh sách server, đúng điều §21 đã chọn tránh.

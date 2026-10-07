@@ -41,7 +41,7 @@ describe('ui server', () => {
     expect(readFileSync(join(root, 'bindings.yaml'), 'utf8')).toContain('github.com/acme/app: [ctx]');
 
     const state = await (await call('/api/state')).json();
-    expect(state.repos).toEqual([{ id: 'github.com/acme/app', servers: ['ctx'], clones: [] }]);
+    expect(state.repos).toEqual([{ id: 'github.com/acme/app', servers: ['ctx'], own: [], clones: [] }]);
 
     const dup = await call('/api/servers', { method: 'POST', body: JSON.stringify({ mode: 'form', form: { name: 'ctx', kind: 'remote', url: 'https://x' } }) });
     expect(dup.status).toBe(400);
@@ -50,5 +50,23 @@ describe('ui server', () => {
     const detach = await call('/api/bindings', { method: 'POST', body: JSON.stringify({ repo: 'github.com/acme/app', server: 'ctx', attached: false }) });
     expect(detach.status).toBe(200);
     expect((await call('/api/servers/ctx', { method: 'DELETE' })).status).toBe(200);
+  });
+
+  it('adds, shares and deletes repository-only servers', async () => {
+    const body = { mode: 'form', repo: 'git@github.com:acme/svc.git', form: { name: 'db', kind: 'command', command: 'node tools/db.js' } };
+    expect(await (await call('/api/servers', { method: 'POST', body: JSON.stringify(body) })).json()).toEqual({ written: ['db'], attached: ['github.com/acme/svc'] });
+    let state = await (await call('/api/state')).json();
+    expect(state.repoOnly.map((s: { name: string; repo: string }) => `${s.repo}/${s.name}`)).toEqual(['github.com/acme/svc/db']);
+    expect(state.repos.find((r: { id: string }) => r.id === 'github.com/acme/svc').own).toEqual(['db']);
+
+    expect((await call('/api/share', { method: 'POST', body: JSON.stringify({ repo: 'github.com/acme/svc', name: 'db' }) })).status).toBe(200);
+    state = await (await call('/api/state')).json();
+    expect(state.repoOnly).toEqual([]);
+    expect(state.servers.find((s: { name: string }) => s.name === 'db').usedBy).toEqual(['github.com/acme/svc']);
+
+    expect(await (await call('/api/unshare', { method: 'POST', body: JSON.stringify({ name: 'db' }) })).json()).toEqual({ repo: 'github.com/acme/svc' });
+    expect((await call('/api/servers/db?repo=github.com/acme/svc', { method: 'DELETE' })).status).toBe(200);
+    state = await (await call('/api/state')).json();
+    expect(state.repoOnly).toEqual([]);
   });
 });

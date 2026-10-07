@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import YAML from 'yaml';
+import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { LoadoutError } from './errors.js';
-import { convertEntry, normalizeServerName, SERVER_HEADER } from './importer.js';
-import { checkServer, SERVERS_DIR, type Problem, type Registry } from './registry.js';
+import { attachServers, detachServers } from './bindings-edit.js';
+import { convertEntry, normalizeServerName } from './importer.js';
+import { checkServer, schemaHeader, serverFileContent, serverPath, type Problem, type Registry } from './registry.js';
+
+export { serverPath } from './registry.js';
 import type { ServerDef } from './types.js';
 
 export interface AddEntry {
@@ -111,6 +113,10 @@ export function entryFromForm(form: FormInput): AddEntry {
 
 export interface PreviewServer {
   name: string;
+  /** Path relative to the registry root. */
+  path: string;
+  /** Repository id for a repository-only server; undefined for a shared one. */
+  repo?: string;
   def: ServerDef;
   yaml: string;
   exists: boolean;
@@ -127,7 +133,7 @@ export interface AddPreview {
 export function previewAdd(
   registry: Registry,
   entries: AddEntry[],
-  opts: { name?: string; description?: string; root?: string } = {},
+  opts: { name?: string; description?: string; root?: string; repo?: string } = {},
 ): AddPreview {
   if (opts.name && entries.length > 1) throw new LoadoutError('A name can only be given when adding a single server');
   const notes: string[] = [];
@@ -142,19 +148,26 @@ export function previewAdd(
     if (servers.some((s) => s.name === def.name)) throw new LoadoutError(`Server "${def.name}" appears twice`);
     const ordered: ServerDef = { name: def.name, ...(def.description ? { description: def.description } : {}), transport: def.transport };
     if (def.params) ordered.params = def.params;
+    const file = serverPath(registry, def.name, opts.repo);
+    const path = relative(registry.root, file).split(sep).join('/');
+    const problems = checkServer(ordered, path, def.name);
+    if (opts.repo && registry.bindings.get(opts.repo)?.some((b) => b.server === def.name)) {
+      problems.push({ level: 'error', file: path, message: `${opts.repo} already uses the shared server "${def.name}"; pick another name` });
+    }
     servers.push({
       name: def.name,
+      path,
+      repo: opts.repo,
       def: ordered,
-      yaml: SERVER_HEADER + YAML.stringify(ordered),
-      exists: registry.servers.has(def.name) || existsSync(serverPath(registry, def.name)),
+      yaml: serverFileContent(registry, file, ordered),
+      exists: existsSync(file) || (opts.repo ? !!registry.repoServers.get(opts.repo)?.has(def.name) : registry.servers.has(def.name)),
       envVars: Object.values(def.params ?? {}).flatMap((p) => (typeof p.default === 'string' ? [p.default.replace(/^env:\/\//, '')] : [])),
-      problems: checkServer(ordered, `${SERVERS_DIR}/${def.name}.yaml`, def.name),
+      problems,
     });
   }
   return { servers, notes };
 }
 
-export const serverPath = (registry: Registry, name: string) => join(registry.root, SERVERS_DIR, `${name}.yaml`);
 
 /** Write previewed servers. Refuses on validation errors, or on existing servers unless overwrite. */
 export function commitAdd(registry: Registry, preview: AddPreview, opts: { overwrite?: boolean } = {}): string[] {
@@ -163,17 +176,80 @@ export function commitAdd(registry: Registry, preview: AddPreview, opts: { overw
     if (errors.length) throw new LoadoutError(`${s.name}: ${errors.map((e) => e.message).join('; ')}`);
     if (s.exists && !opts.overwrite) throw new LoadoutError(`Server "${s.name}" already exists (overwrite to replace it)`);
   }
-  mkdirSync(join(registry.root, SERVERS_DIR), { recursive: true });
-  for (const s of preview.servers) writeFileSync(serverPath(registry, s.name), s.yaml);
+  for (const s of preview.servers) {
+    const file = join(registry.root, s.path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, s.yaml);
+  }
   return preview.servers.map((s) => s.name);
 }
 
-/** Delete a server definition that no repository uses. */
-export function removeServer(registry: Registry, rawName: string) {
+function moveFile(registry: Registry, from: string, to: string) {
+  const text = readFileSync(from, 'utf8').replace(/^# yaml-language-server:.*\n/, '');
+  mkdirSync(dirname(to), { recursive: true });
+  writeFileSync(to, schemaHeader(registry, to) + text);
+  rmSync(from);
+  pruneEmptyDirs(registry, dirname(from));
+}
+
+/** Remove now-empty repos/<host>/<owner>/<name>/ directories (and repos/ itself). */
+function pruneEmptyDirs(registry: Registry, dir: string) {
+  const stop = join(registry.root, 'repos');
+  while (dir === stop || dir.startsWith(stop + sep)) {
+    try {
+      rmdirSync(dir);
+    } catch {
+      return;
+    }
+    dir = dirname(dir);
+  }
+}
+
+/** Turn a repository-only server into a shared one, keeping it attached to that repository. */
+export function shareServer(registry: Registry, repo: string, rawName: string) {
   const name = normalizeServerName(rawName);
-  const users = [...registry.bindings].filter(([, bs]) => bs.some((b) => b.server === name)).map(([id]) => id);
+  const from = serverPath(registry, name, repo);
+  if (!existsSync(from)) throw new LoadoutError(`${repo} has no repository-only server "${name}"`);
+  if (registry.servers.has(name) || existsSync(serverPath(registry, name))) {
+    throw new LoadoutError(`A shared server named "${name}" already exists`);
+  }
+  moveFile(registry, from, serverPath(registry, name));
+  attachServers(registry.bindingsPath, repo, [name]);
+}
+
+/** Turn a shared server used by at most one repository into that repository's own server. */
+export function makeRepoOnly(registry: Registry, rawName: string, repo?: string): string {
+  const name = normalizeServerName(rawName);
+  if (!registry.servers.has(name)) throw new LoadoutError(`No shared server named "${name}"`);
+  const users = usersOf(registry, name);
+  if (users.length > 1) throw new LoadoutError(`"${name}" is used by ${users.length} repositories (${users.join(', ')}); it must stay shared`);
+  const target = repo ?? users[0];
+  if (!target) throw new LoadoutError(`"${name}" is not attached anywhere; say which repository it belongs to`);
+  if (users[0] && users[0] !== target) throw new LoadoutError(`"${name}" is used by ${users[0]}, not ${target}`);
+  const to = serverPath(registry, name, target);
+  if (existsSync(to)) throw new LoadoutError(`${target} already has its own "${name}"`);
+  moveFile(registry, serverPath(registry, name), to);
+  detachServers(registry.bindingsPath, target, [name]);
+  return target;
+}
+
+export function usersOf(registry: Registry, name: string): string[] {
+  return [...registry.bindings].filter(([, bs]) => bs.some((b) => b.server === name)).map(([id]) => id);
+}
+
+/** Delete a shared server no repository uses, or a repository-only server (with `repo`). */
+export function removeServer(registry: Registry, rawName: string, repo?: string) {
+  const name = normalizeServerName(rawName);
+  if (repo) {
+    const file = serverPath(registry, name, repo);
+    if (!existsSync(file)) throw new LoadoutError(`${repo} has no repository-only server "${name}"`);
+    rmSync(file);
+    pruneEmptyDirs(registry, dirname(file));
+    return;
+  }
+  const users = usersOf(registry, name);
   if (users.length) throw new LoadoutError(`"${name}" is still used by: ${users.join(', ')}. Detach it first.`);
   const file = serverPath(registry, name);
-  if (!existsSync(file)) throw new LoadoutError(`No server named "${name}"`);
+  if (!existsSync(file)) throw new LoadoutError(`No shared server named "${name}"`);
   rmSync(file);
 }

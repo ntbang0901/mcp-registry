@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv';
 import YAML from 'yaml';
 import { LoadoutError } from './errors.js';
@@ -16,7 +16,10 @@ export interface Problem {
 
 export interface Registry {
   root: string;
+  /** Shared servers (servers/*.yaml), attachable to any repository via bindings.yaml. */
   servers: Map<string, ServerDef>;
+  /** Repository-only servers (repos/<host>/<owner>/<name>/*.yaml): always active for that repository only. */
+  repoServers: Map<string, Map<string, ServerDef>>;
   /** Normalized repository id -> bindings, in declaration order. */
   bindings: Map<string, Binding[]>;
   bindingsPath: string;
@@ -24,6 +27,15 @@ export interface Registry {
 
 export const BINDINGS_FILE = 'bindings.yaml';
 export const SERVERS_DIR = 'servers';
+export const REPOS_DIR = 'repos';
+
+/** Directory holding a repository's own servers. */
+export const repoServersDir = (root: string, id: string) => join(root, REPOS_DIR, ...id.split('/'));
+
+/** Every repository the registry knows: listed in bindings.yaml or owning repo-only servers. */
+export function knownRepos(registry: Registry): string[] {
+  return [...new Set([...registry.bindings.keys(), ...registry.repoServers.keys()])];
+}
 
 /** Names that usually hold credentials (env vars, headers, query params, CLI flags). */
 export const SECRET_NAME = /(api[_-]?key|apikey|token|secret|passw(or)?d|credential|authorization|private[_-]?key)/i;
@@ -154,6 +166,8 @@ export function loadRegistry(root: string): { registry: Registry; problems: Prob
     }
   }
 
+  const repoServers = loadRepoServers(root, problems);
+
   const bindingsPath = join(root, BINDINGS_FILE);
   const bindings = new Map<string, Binding[]>();
   if (existsSync(bindingsPath)) {
@@ -197,11 +211,82 @@ export function loadRegistry(root: string): { registry: Registry; problems: Prob
             problems.push({ level: 'error', file: BINDINGS_FILE, message: `${where}: ${(e as Error).message}` });
           }
         }
+        for (const b of list) {
+          if (repoServers.get(id)?.has(b.server)) {
+            problems.push({
+              level: 'error',
+              file: BINDINGS_FILE,
+              message: `${id} → ${b.server}: clashes with the repository's own ${REPOS_DIR}/${id}/${b.server}.yaml`,
+            });
+          }
+        }
         bindings.set(id, list);
       }
     }
   }
-  return { registry: { root, servers, bindings, bindingsPath }, problems };
+  return { registry: { root, servers, repoServers, bindings, bindingsPath }, problems };
+}
+
+function loadRepoServers(root: string, problems: Problem[]): Map<string, Map<string, ServerDef>> {
+  const out = new Map<string, Map<string, ServerDef>>();
+  const base = join(root, REPOS_DIR);
+  const walk = (dir: string) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!/\.ya?ml$/.test(e.name)) continue;
+      const relDir = relative(base, dir).split(sep).join('/');
+      const file = relative(root, full);
+      let id: string;
+      try {
+        id = normalizeRepoId(relDir);
+      } catch {
+        problems.push({ level: 'error', file, message: `must be inside ${REPOS_DIR}/<host>/<owner>/<name>/` });
+        continue;
+      }
+      if (id !== relDir) {
+        problems.push({ level: 'error', file, message: `directory must be the normalized repository id: ${REPOS_DIR}/${id}/` });
+        continue;
+      }
+      const data = parseYaml(full, problems);
+      if (data === undefined) continue;
+      const expected = e.name.replace(/\.ya?ml$/, '');
+      problems.push(...checkServer(data, file, expected));
+      const def = data as ServerDef;
+      if (!getValidators().server(data) || def.name !== expected) continue;
+      try {
+        resolveServer(def, { server: def.name, params: {} }, repoContext(id, `/path/to/${id.split('/').pop()}`));
+      } catch (err) {
+        problems.push({ level: 'error', file, message: (err as Error).message });
+      }
+      if (!out.has(id)) out.set(id, new Map());
+      out.get(id)!.set(def.name, def);
+    }
+  };
+  if (existsSync(base)) walk(base);
+  return out;
+}
+
+/** File of a shared server, or of a repository-only server when `repo` is given. */
+export const serverPath = (registry: Registry, name: string, repo?: string) =>
+  join(repo ? repoServersDir(registry.root, repo) : join(registry.root, SERVERS_DIR), `${name}.yaml`);
+
+export function schemaHeader(registry: Registry, file: string): string {
+  const schema = relative(dirname(file), join(registry.root, 'schemas', 'server.schema.json')).split(sep).join('/');
+  return `# yaml-language-server: $schema=${schema}\n`;
+}
+
+export function serverFileContent(registry: Registry, file: string, def: ServerDef): string {
+  return schemaHeader(registry, file) + YAML.stringify(def);
 }
 
 export function formatProblems(problems: Problem[]): string {

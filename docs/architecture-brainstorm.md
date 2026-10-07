@@ -870,8 +870,8 @@ Không làm ở MVP: environment overlay, semver từng server, Web UI, API, RBA
 
 | # | Quyết định | Khuyến nghị | Vì sao phải chốt sớm |
 |---|---|---|---|
-| D1 | Nguồn sự thật của mapping: trong repo hay `repositories/` trung tâm? | Trong repo (manifest) | Quyết định toàn bộ ownership, CLI, GitOps flow |
-| D2 | File generated: commit hay gitignore? | Commit + CI chặn drift | Ảnh hưởng cloud agent, onboarding, review |
+| D1 | Nguồn sự thật của mapping: trong repo hay `repositories/` trung tâm? | Quy mô nhỏ / binding không tham số: **trung tâm** (xem §21). Nhiều team, nhiều tham số theo repo: trong repo | Quyết định toàn bộ ownership, CLI, GitOps flow |
+| D2 | File generated: commit hay gitignore? | Theo D1: mapping trung tâm → **gitignore** (§21); mapping trong repo → commit + CI chặn drift | Ảnh hưởng cloud agent, onboarding, review |
 | D3 | Chiến lược secret: launcher (S2) hay env interpolation (S1)? Provider đầu tiên? | S3 > S2 > S1; provider = cái đang dùng | Quyết định CLI có phải cài ở mọi nơi agent chạy không |
 | D4 | Client nào ở MVP? | 2 client dùng nhiều nhất | Quyết định độ phức tạp IR |
 | D5 | Versioning: snapshot registry hay semver từng server? | Snapshot cho MVP | Ảnh hưởng format lockfile — khó đổi sau |
@@ -889,3 +889,79 @@ Không làm ở MVP: environment overlay, semver từng server, Web UI, API, RBA
 - Monorepo: một repo nhiều service, mỗi service cần MCP khác nhau → manifest ở cấp thư mục con? (Client có hỗ trợ config theo thư mục con không?)
 - Cloud agents (agent chạy trong container từ repo clone mới): lấy secret bằng identity nào?
 - Ai review bảo mật cho server mới được đưa vào catalog?
+
+---
+
+## 21. Case study: context7 / linkup / code-graph — điều chỉnh khuyến nghị
+
+Hiện trạng:
+
+```text
+repo-a/.mcp.json         → context7 + linkup     (định nghĩa đầy đủ: command, args, key)
+repo-b/.mcp.json         → code-graph + linkup   (linkup bị định nghĩa lại lần 2)
+```
+
+Nỗi đau thật gồm hai phần: (1) **định nghĩa bị lặp** (linkup, có thể cả API key, nằm ở 2 nơi); (2) **mapping rải rác**: muốn biết hoặc sửa "repo nào dùng gì" phải đi vào từng repo.
+
+Lý do chính ở §H để đặt mapping trong repo là *tham số riêng theo repo* (database, Jira project) và *nhiều team sở hữu*. Ở case này cả hai lý do đều yếu: context7 và linkup không có tham số theo repo, code-graph chỉ cần đường dẫn repo (suy ra được bằng context variable `{{ repo.root }}`). Vì vậy **mapping trung tâm là lựa chọn đúng**, và repo không giữ bản sao config nào.
+
+### 21.1 Cấu trúc
+
+```text
+mcp-loadout/
+├── servers/
+│   ├── context7.yaml
+│   ├── linkup.yaml
+│   └── code-graph.yaml
+└── bindings.yaml            # một file duy nhất khi còn ít repo; tách repositories/*.yaml khi > ~30 repo
+```
+
+```yaml
+# bindings.yaml — "ai dùng gì" nằm ở một chỗ
+repositories:
+  github.com/ntbang0901/repo-a: [context7, linkup]
+  github.com/ntbang0901/repo-b: [code-graph, linkup]
+```
+
+```yaml
+# servers/linkup.yaml — định nghĩa một lần (package/version/URL là ví dụ, cần điền giá trị thật)
+name: linkup
+transport:
+  type: stdio
+  package: { registry: npm, name: "<linkup-mcp-package>", version: "<exact>" }
+params:
+  apiKey: { type: secret, default: "env://LINKUP_API_KEY" }   # một secret ref cho mọi repo
+env:
+  LINKUP_API_KEY: "{{ params.apiKey }}"
+```
+
+```yaml
+# servers/code-graph.yaml — tham số duy nhất suy ra từ repo
+name: code-graph
+transport:
+  type: stdio
+  package: { registry: npm, name: "<code-graph-package>", version: "<exact>" }
+args: ["--repo", "{{ repo.root }}"]
+```
+
+### 21.2 Repo chứa gì
+
+Không commit gì liên quan MCP. `loadout sync` (chạy trong repo) nhận diện repo qua git remote, tra `bindings.yaml`, render `.mcp.json` / `.cursor/mcp.json` và thêm chúng vào `.gitignore`. (Với Claude Code có thể ghi vào *local scope* thay vì file trong repo.)
+
+### 21.3 Thao tác hằng ngày
+
+| Việc | Trước | Sau |
+|---|---|---|
+| Xem repo nào dùng gì | Mở từng repo | `loadout matrix` (bảng repo × server) hoặc đọc `bindings.yaml` |
+| Thêm linkup cho repo C | Copy block JSON + key | `loadout attach linkup --repo repo-c` → commit registry → `loadout sync` |
+| Nâng version / đổi key linkup | Sửa N repo | Sửa `servers/linkup.yaml` một lần → `loadout sync --all` |
+| Bỏ context7 khỏi repo A | Sửa file trong repo A | `loadout detach context7 --repo repo-a` → sync |
+
+`loadout sync --all` quét thư mục làm việc (vd. `~/code`), tìm mọi repo có trong `bindings.yaml` và render lại.
+
+### 21.4 Trade-off chấp nhận
+
+- **Không theo branch:** mọi branch của repo dùng cùng bộ MCP — chấp nhận được với các server dạng công cụ (docs, search, code graph).
+- **Cloud agent / máy mới** không có MCP cho tới khi chạy `loadout sync` (có thể đưa vào session-start hook).
+- **Lệch sau khi sửa registry** cho tới lần sync kế tiếp — `loadout status` báo repo nào đang cũ.
+- Khi sau này có server cần tham số riêng theo repo hoặc nhiều team sở hữu repo, có thể cho phép override cục bộ trong repo — nhưng **phải giữ đúng một nguồn sự thật cho danh sách server**.

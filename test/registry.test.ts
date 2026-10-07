@@ -43,7 +43,8 @@ describe('loadRegistry', () => {
 
   it('rejects plaintext secrets in headers, env and url queries', () => {
     const root = registry({
-      'servers/a.yaml': 'name: a\ntransport: { type: http, url: "https://x?apiKey=abc", headers: { Authorization: "Bearer abc" } }\n',
+      'servers/a.yaml':
+        'name: a\ntransport: { type: http, url: "https://x?apiKey=abc", headers: { Authorization: "Bearer abc" } }\n',
       'servers/b.yaml': 'name: b\ntransport: { type: stdio, command: node, env: { GITHUB_TOKEN: ghp_x } }\n',
     });
     const all = messages(root).join('\n');
@@ -57,7 +58,8 @@ describe('loadRegistry', () => {
       'servers/a.yaml': 'name: b\ntransport: { type: http, url: https://x }\n',
       'servers/c.yaml': 'name: c\ntransport: { type: http, url: "https://x/{{ params.nope }}" }\n',
       'servers/linkup.yaml': LINKUP,
-      'bindings.yaml': 'repositories:\n  github.com/acme/app: [ghost]\n  github.com/acme/api:\n    linkup: { params: { apiKey: sk-live-123 } }\n',
+      'bindings.yaml':
+        'repositories:\n  github.com/acme/app: [ghost]\n  github.com/acme/api:\n    linkup: { params: { apiKey: sk-live-123 } }\n',
     });
     const all = messages(root).join('\n');
     expect(all).toMatch(/name "b" must match the file name "a"/);
@@ -69,7 +71,9 @@ describe('loadRegistry', () => {
 
   it('warns on raw npx commands', () => {
     const root = registry({ 'servers/x.yaml': 'name: x\ntransport: { type: stdio, command: npx, args: [-y, pkg] }\n' });
-    expect(messages(root)).toEqual(['warning: command "npx" runs an unpinned package; use transport.package with an exact version']);
+    expect(messages(root)).toEqual([
+      'warning: command "npx" runs an unpinned package; use transport.package with an exact version',
+    ]);
   });
 });
 

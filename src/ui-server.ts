@@ -106,7 +106,9 @@ function buildState(opts: UiOptions): Json {
       status: def.status ?? '',
       kind: t.type === 'http' ? 'remote' : 'local',
       summary,
-      envVars: Object.values(def.params ?? {}).flatMap((p) => (p.type === 'secret' && typeof p.default === 'string' ? [p.default.replace(/^env:\/\//, '')] : [])),
+      envVars: Object.values(def.params ?? {}).flatMap((p) =>
+        p.type === 'secret' && typeof p.default === 'string' ? [p.default.replace(/^env:\/\//, '')] : [],
+      ),
       usedBy: repo ? [repo] : usersOf(registry, def.name),
       params: Object.entries(def.params ?? {}).map(([name, spec]) => ({ name, ...spec })),
     };
@@ -119,7 +121,9 @@ function buildState(opts: UiOptions): Json {
     own: [...(registry.repoServers.get(id)?.keys() ?? [])],
     params: Object.fromEntries((registry.bindings.get(id) ?? []).map((b) => [b.server, b.params])),
     clones: (clones.get(id) ?? []).map((c) =>
-      valid ? cloneStatus(registry, c, opts.config, state) : { path: c.root, status: 'error', error: 'The registry has errors', files: [] },
+      valid
+        ? cloneStatus(registry, c, opts.config, state)
+        : { path: c.root, status: 'error', error: 'The registry has errors', files: [] },
     ),
     env: valid ? repoEnv(registry, id, clones.get(id)?.[0]?.root ?? '/repo') : [],
   }));
@@ -219,7 +223,9 @@ async function handleApi(req: IncomingMessage, url: URL, body: Json, opts: UiOpt
       return { ok: true };
     }
     case 'POST /api/unshare': {
-      return { repo: makeRepoOnly(registry(), String(body.name ?? ''), body.repo ? normalizeRepoId(String(body.repo)) : undefined) };
+      return {
+        repo: makeRepoOnly(registry(), String(body.name ?? ''), body.repo ? normalizeRepoId(String(body.repo)) : undefined),
+      };
     }
     case 'POST /api/params': {
       const params = updateBindingParams(
@@ -252,7 +258,11 @@ async function handleApi(req: IncomingMessage, url: URL, body: Json, opts: UiOpt
   }
   if (req.method === 'DELETE' && url.pathname.startsWith('/api/servers/')) {
     const repo = url.searchParams.get('repo');
-    removeServer(registry(), decodeURIComponent(url.pathname.slice('/api/servers/'.length)), repo ? normalizeRepoId(repo) : undefined);
+    removeServer(
+      registry(),
+      decodeURIComponent(url.pathname.slice('/api/servers/'.length)),
+      repo ? normalizeRepoId(repo) : undefined,
+    );
     return { ok: true };
   }
   return undefined;
@@ -305,7 +315,8 @@ export function startUi(opts: UiOptions): Promise<{ url: string; close: () => vo
     const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
     if (!hostOk) return send(res, 403, { error: 'Forbidden host' });
     if (url.pathname === '/' && req.method === 'GET') {
-      if (url.searchParams.get('token') !== token) return send(res, 403, 'Open the URL printed by `loadout ui` (it includes the access token).', 'text/plain');
+      if (url.searchParams.get('token') !== token)
+        return send(res, 403, 'Open the URL printed by `loadout ui` (it includes the access token).', 'text/plain');
       return send(res, 200, html, 'text/html');
     }
     if (!url.pathname.startsWith('/api/')) return send(res, 404, { error: 'Not found' });

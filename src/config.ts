@@ -38,7 +38,13 @@ export function stateDir(): string {
 }
 
 export function parseTargets(raw: unknown, source: string): AdapterId[] {
-  const list = typeof raw === 'string' ? raw.split(',').map((s) => s.trim()).filter(Boolean) : raw;
+  const list =
+    typeof raw === 'string'
+      ? raw
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : raw;
   if (!Array.isArray(list) || list.length === 0) {
     throw new LoadoutError(`${source}: targets must be a non-empty list`);
   }

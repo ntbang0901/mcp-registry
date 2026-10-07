@@ -609,7 +609,8 @@ function repoPage(repo) {
         repo.clones.length ? el('button', { class: 'btn', type: 'button', onclick: () => sync(repo.id) }, 'Sync') : null)),
 
     el('div', { class: 'section' },
-      el('div', { class: 'section-head' }, el('h2', {}, 'MCP servers'), el('div', { class: 'push' }, addServerPicker(repo, available))),
+      el('div', { class: 'section-head' }, el('h2', {}, 'MCP servers'),
+        attached.length || adding.length ? el('div', { class: 'push' }, addServerPicker(repo, available)) : null),
       attached.length || adding.length
         ? el('div', { class: 'panel list' }, adding.map((name) => serverCard(repo, name, true)), attached.map((name) => serverCard(repo, name, false)))
         : el('div', { class: 'panel empty-state' }, el('div', {}, 'This repository uses no shared servers yet.'), addServerPicker(repo, available, true))),
@@ -965,7 +966,9 @@ function showAddRepo() {
 let tab = 'paste';
 let lastPreview = null;
 
-function openDrawer(ctx = {}) {
+async function openDrawer(ctx = {}) {
+  if (!state) await guard(refresh); // clicked before the first load finished
+  if (!state) return;
   const ids = [...state.repos.map((r) => r.id), ...state.unregistered.map((r) => r.id)];
   const sel = $('#scope-repo');
   sel.replaceChildren(...ids.map((id) => el('option', { value: id }, id)));

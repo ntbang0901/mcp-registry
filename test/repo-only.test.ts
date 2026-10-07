@@ -41,7 +41,9 @@ describe('repository-only servers', () => {
       'repos/GitHub.com/Acme/X/db.yaml': DB,
       'repos/stray.yaml': DB,
     });
-    const all = problems().map((p) => `${p.file}: ${p.message}`).join('\n');
+    const all = problems()
+      .map((p) => `${p.file}: ${p.message}`)
+      .join('\n');
     expect(all).toMatch(/linkup: clashes with the repository's own/);
     expect(all).toMatch(/directory must be the normalized repository id: repos\/github.com\/acme\/x\//);
     expect(all).toMatch(/repos\/stray.yaml: must be inside repos\/<host>\/<owner>\/<name>\//);
@@ -65,12 +67,22 @@ describe('repository-only servers', () => {
 
     shareServer(registry(), 'github.com/acme/app', 'db');
     expect(existsSync(join(root, 'repos'))).toBe(false); // empty directories pruned
-    expect(readFileSync(join(root, 'servers/db.yaml'), 'utf8')).toMatch(/^# yaml-language-server: \$schema=..\/schemas\/server.schema.json\n/);
-    expect(registry().bindings.get('github.com/acme/app')!.map((b) => b.server)).toEqual(['linkup', 'db']);
+    expect(readFileSync(join(root, 'servers/db.yaml'), 'utf8')).toMatch(
+      /^# yaml-language-server: \$schema=..\/schemas\/server.schema.json\n/,
+    );
+    expect(
+      registry()
+        .bindings.get('github.com/acme/app')!
+        .map((b) => b.server),
+    ).toEqual(['linkup', 'db']);
     expect(problems()).toEqual([]);
 
     expect(makeRepoOnly(registry(), 'db')).toBe('github.com/acme/app');
-    expect(registry().bindings.get('github.com/acme/app')!.map((b) => b.server)).toEqual(['linkup']);
+    expect(
+      registry()
+        .bindings.get('github.com/acme/app')!
+        .map((b) => b.server),
+    ).toEqual(['linkup']);
     expect(registry().repoServers.get('github.com/acme/app')!.has('db')).toBe(true);
 
     removeServer(registry(), 'db', 'github.com/acme/app');
@@ -78,7 +90,9 @@ describe('repository-only servers', () => {
   });
 
   it('refuses to make a server used by several repositories repo-only', () => {
-    const { registry } = setup({ 'bindings.yaml': 'repositories:\n  github.com/acme/a: [linkup]\n  github.com/acme/b: [linkup]\n' });
+    const { registry } = setup({
+      'bindings.yaml': 'repositories:\n  github.com/acme/a: [linkup]\n  github.com/acme/b: [linkup]\n',
+    });
     expect(() => makeRepoOnly(registry(), 'linkup')).toThrow(/used by 2 repositories/);
   });
 

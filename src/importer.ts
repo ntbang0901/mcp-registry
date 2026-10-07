@@ -11,7 +11,12 @@ const EXACT_VERSION = /^[0-9]+\.[0-9]+(\.[0-9]+)?([-.+][0-9A-Za-z.+-]+)?$/;
 const ENV_REF = /^\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}$/;
 
 export function normalizeServerName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'server';
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'server'
+  );
 }
 
 function envName(s: string): string {
@@ -51,7 +56,8 @@ function secretParam(ctx: ConvertContext, value: string, suggested: string, wher
 function portable(ctx: ConvertContext, value: string, where: string): string {
   let out = value.replaceAll('${workspaceFolder}', '{{ repo.root }}');
   if (ctx.root && ctx.root.length > 1) out = out.replaceAll(ctx.root, '{{ repo.root }}');
-  if (/\$\{[^}]+\}/.test(out)) ctx.notes.push(`${ctx.server}: ${where} keeps a client-specific variable (${value}); check it works in every client`);
+  if (/\$\{[^}]+\}/.test(out))
+    ctx.notes.push(`${ctx.server}: ${where} keeps a client-specific variable (${value}); check it works in every client`);
   return out;
 }
 
@@ -91,7 +97,9 @@ function convertStdio(ctx: ConvertContext, cfg: Record<string, unknown>): StdioT
       t.package = { registry: runner === 'npx' ? 'npm' : 'pypi', name: m[1], version: m[2] };
       args = args.slice(i + 1);
     } else {
-      ctx.notes.push(`${ctx.server}: "${command} ${spec ?? ''}" is not pinned to an exact version — kept as a raw command; pin it in servers/${ctx.server}.yaml`);
+      ctx.notes.push(
+        `${ctx.server}: "${command} ${spec ?? ''}" is not pinned to an exact version — kept as a raw command; pin it in servers/${ctx.server}.yaml`,
+      );
     }
   }
   if (!t.package) t.command = portable(ctx, command, 'command');
@@ -101,14 +109,17 @@ function convertStdio(ctx: ConvertContext, cfg: Record<string, unknown>): StdioT
   if (Object.keys(env).length) {
     t.env = {};
     for (const [k, v] of Object.entries(env)) {
-      t.env[k] = SECRET_NAME.test(k) ? secretParam(ctx, String(v), k, `env ${k}`, /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) : portable(ctx, String(v), `env ${k}`);
+      t.env[k] = SECRET_NAME.test(k)
+        ? secretParam(ctx, String(v), k, `env ${k}`, /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
+        : portable(ctx, String(v), `env ${k}`);
     }
   }
   return t;
 }
 
 function convertHttp(ctx: ConvertContext, cfg: Record<string, unknown>): HttpTransportDef {
-  if (cfg.type === 'sse') ctx.notes.push(`${ctx.server}: SSE transport imported as http — check the server supports streamable HTTP`);
+  if (cfg.type === 'sse')
+    ctx.notes.push(`${ctx.server}: SSE transport imported as http — check the server supports streamable HTTP`);
   let url = String(cfg.url);
   const [base, query] = url.split('?', 2);
   if (query) {
@@ -144,7 +155,8 @@ export function convertEntry(rawName: string, cfg: Record<string, unknown>, root
   const name = normalizeServerName(rawName);
   const ctx: ConvertContext = { server: name, root, params: {}, notes: [] };
   if (name !== rawName) ctx.notes.push(`"${rawName}" renamed to "${name}"`);
-  for (const k of Object.keys(cfg)) if (!KNOWN_FIELDS.has(k)) ctx.notes.push(`${name}: field "${k}" is not supported and was ignored`);
+  for (const k of Object.keys(cfg))
+    if (!KNOWN_FIELDS.has(k)) ctx.notes.push(`${name}: field "${k}" is not supported and was ignored`);
   let transport: ServerDef['transport'];
   if (typeof cfg.url === 'string') transport = convertHttp(ctx, cfg);
   else if (typeof cfg.command === 'string') transport = convertStdio(ctx, cfg);
@@ -187,7 +199,8 @@ export function importRepo(
       def.description = `Imported from ${repo.id}`;
       const previous = found.get(def.name);
       if (previous) {
-        if (comparable(previous) !== comparable(def)) result.notes.push(`${def.name}: differs between client files; using the first one`);
+        if (comparable(previous) !== comparable(def))
+          result.notes.push(`${def.name}: differs between client files; using the first one`);
         continue;
       }
       result.notes.push(...notes);
@@ -195,7 +208,11 @@ export function importRepo(
     }
   }
   if (!result.sources.length) {
-    throw new LoadoutError(`No MCP config found in ${repo.root} (looked for ${Object.values(ADAPTERS).map((a) => a.path).join(', ')})`);
+    throw new LoadoutError(
+      `No MCP config found in ${repo.root} (looked for ${Object.values(ADAPTERS)
+        .map((a) => a.path)
+        .join(', ')})`,
+    );
   }
   const scope = opts.repoOnly ? repo.id : undefined;
   for (const def of found.values()) {
@@ -203,7 +220,9 @@ export function importRepo(
     if (existing) {
       result.reused.push(def.name);
       if (comparable(existing) !== comparable(def)) {
-        result.notes.push(`${def.name}: ${relative(registry.root, serverPath(registry, def.name, scope))} already exists with a different definition — kept the registry version`);
+        result.notes.push(
+          `${def.name}: ${relative(registry.root, serverPath(registry, def.name, scope))} already exists with a different definition — kept the registry version`,
+        );
       }
       continue;
     }

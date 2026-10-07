@@ -31,7 +31,15 @@ describe('resolveServer', () => {
     expect(r.transport).toEqual({
       type: 'http',
       url: [{ kind: 'text', value: 'https://mcp.linkup.so/mcp' }],
-      headers: [['Authorization', [{ kind: 'text', value: 'Bearer ' }, { kind: 'env', name: 'LINKUP_API_KEY' }]]],
+      headers: [
+        [
+          'Authorization',
+          [
+            { kind: 'text', value: 'Bearer ' },
+            { kind: 'env', name: 'LINKUP_API_KEY' },
+          ],
+        ],
+      ],
     });
     expect(secretEnvNames(r)).toEqual(['LINKUP_API_KEY']);
   });
@@ -51,9 +59,9 @@ describe('resolveServer', () => {
   });
 
   it('rejects literal secrets without echoing them', () => {
-    expect(() => resolveServer(postgres, { server: 'postgres', params: { database: 'x', password: 'hunter2-very-secret' } }, ctx())).toThrow(
-      /not a secret reference/,
-    );
+    expect(() =>
+      resolveServer(postgres, { server: 'postgres', params: { database: 'x', password: 'hunter2-very-secret' } }, ctx()),
+    ).toThrow(/not a secret reference/);
     try {
       resolveServer(postgres, { server: 'postgres', params: { database: 'x', password: 'hunter2-very-secret' } }, ctx());
     } catch (e) {
@@ -62,7 +70,8 @@ describe('resolveServer', () => {
   });
 
   it('rejects unsupported secret providers, unknown and missing params, wrong types', () => {
-    const bind = (params: Record<string, string | number | boolean>) => () => resolveServer(postgres, { server: 'postgres', params }, ctx());
+    const bind = (params: Record<string, string | number | boolean>) => () =>
+      resolveServer(postgres, { server: 'postgres', params }, ctx());
     expect(bind({ database: 'x', password: 'vault://kv/x' })).toThrow(/not supported yet/);
     expect(bind({ password: 'env://X' })).toThrow(/requires param "database"/);
     expect(bind({ database: 'x', password: 'env://X', nope: 1 })).toThrow(/no param "nope"/);

@@ -57,7 +57,14 @@ function schemaMessages(errors: ErrorObject[] | null | undefined): string[] {
   // oneOf failures are noisy; keep the most specific messages.
   const relevant = (errors ?? []).filter((e) => e.keyword !== 'oneOf' && e.keyword !== 'not' && e.keyword !== 'if');
   const list = relevant.length ? relevant : (errors ?? []);
-  return [...new Set(list.map((e) => `${e.instancePath || '/'} ${e.message}${e.keyword === 'additionalProperties' ? `: ${(e.params as { additionalProperty: string }).additionalProperty}` : ''}`))];
+  return [
+    ...new Set(
+      list.map(
+        (e) =>
+          `${e.instancePath || '/'} ${e.message}${e.keyword === 'additionalProperties' ? `: ${(e.params as { additionalProperty: string }).additionalProperty}` : ''}`,
+      ),
+    ),
+  ];
 }
 
 function parseYaml(file: string, problems: Problem[]): unknown {
@@ -109,7 +116,9 @@ function lintServer(def: ServerDef, file: string, problems: Problem[]) {
   // Plaintext secrets must never live in the registry.
   const hasParam = (v: string) => /\{\{\s*params\./.test(v);
   const secretEntries =
-    t.type === 'http' ? Object.entries(t.headers ?? {}).map(([k, v]) => [`headers.${k}`, k, v]) : Object.entries(t.env ?? {}).map(([k, v]) => [`env.${k}`, k, v]);
+    t.type === 'http'
+      ? Object.entries(t.headers ?? {}).map(([k, v]) => [`headers.${k}`, k, v])
+      : Object.entries(t.env ?? {}).map(([k, v]) => [`env.${k}`, k, v]);
   for (const [where, key, value] of secretEntries) {
     if (SECRET_NAME.test(key) && value && !hasParam(value)) err(`${where} looks like a plaintext secret; use a secret param`);
   }
@@ -201,10 +210,15 @@ export function loadRegistry(root: string): { registry: Registry; problems: Prob
           seen.add(b.server);
           const def = servers.get(b.server);
           if (!def) {
-            problems.push({ level: 'error', file: BINDINGS_FILE, message: `${where}: unknown server (no ${SERVERS_DIR}/${b.server}.yaml)` });
+            problems.push({
+              level: 'error',
+              file: BINDINGS_FILE,
+              message: `${where}: unknown server (no ${SERVERS_DIR}/${b.server}.yaml)`,
+            });
             continue;
           }
-          if (def.status === 'deprecated') problems.push({ level: 'warning', file: BINDINGS_FILE, message: `${where}: server is deprecated` });
+          if (def.status === 'deprecated')
+            problems.push({ level: 'warning', file: BINDINGS_FILE, message: `${where}: server is deprecated` });
           try {
             resolveServer(def, b, ctx);
           } catch (e) {
@@ -281,7 +295,9 @@ export const serverPath = (registry: Registry, name: string, repo?: string) =>
   join(repo ? repoServersDir(registry.root, repo) : join(registry.root, SERVERS_DIR), `${name}.yaml`);
 
 export function schemaHeader(registry: Registry, file: string): string {
-  const schema = relative(dirname(file), join(registry.root, 'schemas', 'server.schema.json')).split(sep).join('/');
+  const schema = relative(dirname(file), join(registry.root, 'schemas', 'server.schema.json'))
+    .split(sep)
+    .join('/');
   return `# yaml-language-server: $schema=${schema}\n`;
 }
 

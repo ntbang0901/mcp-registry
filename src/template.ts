@@ -3,10 +3,7 @@ import type { ParamValue, RepoContext, Value } from './types.js';
 
 export const REPO_VARS = ['id', 'root', 'host', 'slug', 'owner', 'name'] as const;
 
-export type ResolvedParam =
-  | { kind: 'value'; value: ParamValue }
-  | { kind: 'secret'; env: string }
-  | { kind: 'unset' };
+export type ResolvedParam = { kind: 'value'; value: ParamValue } | { kind: 'secret'; env: string } | { kind: 'unset' };
 
 export interface TemplateRef {
   scope: string;
@@ -40,11 +37,7 @@ export function templateRefs(tpl: string): TemplateRef[] {
  * Render a template into a Value. Returns undefined when it references an optional
  * param that has no value, so the caller can drop the whole entry (arg, env var, header).
  */
-export function renderTemplate(
-  tpl: string,
-  repo: RepoContext,
-  params: Map<string, ResolvedParam>,
-): Value | undefined {
+export function renderTemplate(tpl: string, repo: RepoContext, params: Map<string, ResolvedParam>): Value | undefined {
   templateRefs(tpl);
   const parts: Value = [];
   const pushText = (text: string) => {

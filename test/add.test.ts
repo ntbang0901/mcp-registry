@@ -25,9 +25,22 @@ describe('parseServerJson', () => {
 
 describe('form helpers', () => {
   it('splits command lines with quotes', () => {
-    expect(splitCommandLine(`npx -y "@a/b@1.0.0" --name 'my repo' a\\ b ""`)).toEqual(['npx', '-y', '@a/b@1.0.0', '--name', 'my repo', 'a b', '']);
+    expect(splitCommandLine(`npx -y "@a/b@1.0.0" --name 'my repo' a\\ b ""`)).toEqual([
+      'npx',
+      '-y',
+      '@a/b@1.0.0',
+      '--name',
+      'my repo',
+      'a b',
+      '',
+    ]);
     expect(() => splitCommandLine('npx "oops')).toThrow(/Unterminated/);
-    expect(splitCommandLine('pg --db {{ params.database }} --url=x/{{ repo.name }}/y')).toEqual(['pg', '--db', '{{ params.database }}', '--url=x/{{ repo.name }}/y']);
+    expect(splitCommandLine('pg --db {{ params.database }} --url=x/{{ repo.name }}/y')).toEqual([
+      'pg',
+      '--db',
+      '{{ params.database }}',
+      '--url=x/{{ repo.name }}/y',
+    ]);
   });
 
   it('parses KEY=value and Header: value pairs', () => {
@@ -36,8 +49,15 @@ describe('form helpers', () => {
   });
 
   it('builds entries from the form', () => {
-    expect(entryFromForm({ name: 'r', kind: 'remote', url: ' https://x ', pairs: 'K=v' }).cfg).toEqual({ type: 'http', url: 'https://x', headers: { K: 'v' } });
-    expect(entryFromForm({ name: 'c', kind: 'command', command: 'uvx pkg==1.0.0 --a' }).cfg).toEqual({ command: 'uvx', args: ['pkg==1.0.0', '--a'] });
+    expect(entryFromForm({ name: 'r', kind: 'remote', url: ' https://x ', pairs: 'K=v' }).cfg).toEqual({
+      type: 'http',
+      url: 'https://x',
+      headers: { K: 'v' },
+    });
+    expect(entryFromForm({ name: 'c', kind: 'command', command: 'uvx pkg==1.0.0 --a' }).cfg).toEqual({
+      command: 'uvx',
+      args: ['pkg==1.0.0', '--a'],
+    });
     expect(() => entryFromForm({ name: '', kind: 'remote', url: 'x' })).toThrow(/Name/);
     expect(() => entryFromForm({ name: 'r', kind: 'remote' })).toThrow(/URL/);
   });
@@ -53,9 +73,13 @@ describe('previewAdd / commitAdd / removeServer', () => {
 
   it('previews without secrets, writes valid files, refuses existing names unless overwrite', () => {
     const { root, registry } = setup();
-    const preview = previewAdd(registry(), parseServerJson('{"mcpServers":{"Search":{"url":"https://s/mcp","headers":{"X-Api-Key":"live-123"}}}}'), {
-      description: 'Search',
-    });
+    const preview = previewAdd(
+      registry(),
+      parseServerJson('{"mcpServers":{"Search":{"url":"https://s/mcp","headers":{"X-Api-Key":"live-123"}}}}'),
+      {
+        description: 'Search',
+      },
+    );
     expect(preview.servers[0]).toMatchObject({ name: 'search', exists: false, envVars: ['SEARCH_X_API_KEY'], problems: [] });
     expect(preview.servers[0].yaml).not.toContain('live-123');
     expect(preview.servers[0].yaml).toContain('description: Search');
@@ -73,7 +97,9 @@ describe('previewAdd / commitAdd / removeServer', () => {
     const { registry } = setup();
     const bad = previewAdd(registry(), [{ name: 'x', cfg: { command: 'npx', args: ['-y', 'pkg@latest'] } }]);
     expect(bad.servers[0].problems.map((p) => p.level)).toEqual(['warning']);
-    expect(() => previewAdd(registry(), parseServerJson('{"a":{"url":"https://a"},"b":{"url":"https://b"}}'), { name: 'n' })).toThrow(/single server/);
+    expect(() =>
+      previewAdd(registry(), parseServerJson('{"a":{"url":"https://a"},"b":{"url":"https://b"}}'), { name: 'n' }),
+    ).toThrow(/single server/);
     expect(() => previewAdd(registry(), parseServerJson('{"command":"x"}'))).toThrow(/no server name/);
   });
 

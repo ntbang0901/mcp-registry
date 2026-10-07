@@ -4,7 +4,15 @@ import { LoadoutError } from './errors.js';
 import { attachServers, detachServers } from './bindings-edit.js';
 import { convertEntry, normalizeServerName } from './importer.js';
 import YAML from 'yaml';
-import { checkServer, loadRegistry, schemaHeader, serverFileContent, serverPath, type Problem, type Registry } from './registry.js';
+import {
+  checkServer,
+  loadRegistry,
+  schemaHeader,
+  serverFileContent,
+  serverPath,
+  type Problem,
+  type Registry,
+} from './registry.js';
 
 export { serverPath } from './registry.js';
 import { templateRefs } from './template.js';
@@ -112,7 +120,10 @@ export function entryFromForm(form: FormInput): AddEntry {
   const pairs = parsePairs(form.pairs);
   if (form.kind === 'remote') {
     if (!form.url?.trim()) throw new LoadoutError('URL is required');
-    return { name: form.name, cfg: { type: 'http', url: form.url.trim(), ...(Object.keys(pairs).length ? { headers: pairs } : {}) } };
+    return {
+      name: form.name,
+      cfg: { type: 'http', url: form.url.trim(), ...(Object.keys(pairs).length ? { headers: pairs } : {}) },
+    };
   }
   const [command, ...args] = splitCommandLine(form.command ?? '');
   if (!command) throw new LoadoutError('Command is required');
@@ -182,7 +193,11 @@ export function previewAdd(
     else if (typeof entry.cfg.description === 'string') def.description = entry.cfg.description;
     notes.push(...n);
     if (servers.some((s) => s.name === def.name)) throw new LoadoutError(`Server "${def.name}" appears twice`);
-    const ordered: ServerDef = { name: def.name, ...(def.description ? { description: def.description } : {}), transport: def.transport };
+    const ordered: ServerDef = {
+      name: def.name,
+      ...(def.description ? { description: def.description } : {}),
+      transport: def.transport,
+    };
     if (def.params) ordered.params = def.params;
     const file = serverPath(registry, def.name, opts.repo);
     const path = relative(registry.root, file).split(sep).join('/');
@@ -197,7 +212,11 @@ export function previewAdd(
       notes.push(`${def.name}: ${placeholders.join(', ')} — set per repository (required)`);
     }
     if (opts.repo && registry.bindings.get(opts.repo)?.some((b) => b.server === def.name)) {
-      problems.push({ level: 'error', file: path, message: `${opts.repo} already uses the shared server "${def.name}"; pick another name` });
+      problems.push({
+        level: 'error',
+        file: path,
+        message: `${opts.repo} already uses the shared server "${def.name}"; pick another name`,
+      });
     }
     servers.push({
       name: def.name,
@@ -205,14 +224,16 @@ export function previewAdd(
       repo: opts.repo,
       def: ordered,
       yaml: serverFileContent(registry, file, ordered),
-      exists: existsSync(file) || (opts.repo ? !!registry.repoServers.get(opts.repo)?.has(def.name) : registry.servers.has(def.name)),
-      envVars: Object.values(def.params ?? {}).flatMap((p) => (typeof p.default === 'string' ? [p.default.replace(/^env:\/\//, '')] : [])),
+      exists:
+        existsSync(file) || (opts.repo ? !!registry.repoServers.get(opts.repo)?.has(def.name) : registry.servers.has(def.name)),
+      envVars: Object.values(def.params ?? {}).flatMap((p) =>
+        typeof p.default === 'string' ? [p.default.replace(/^env:\/\//, '')] : [],
+      ),
       problems,
     });
   }
   return { servers, notes };
 }
-
 
 /** Write previewed servers. Refuses on validation errors, or on existing servers unless overwrite. */
 export function commitAdd(registry: Registry, preview: AddPreview, opts: { overwrite?: boolean } = {}): string[] {
@@ -267,7 +288,8 @@ export function makeRepoOnly(registry: Registry, rawName: string, repo?: string)
   const name = normalizeServerName(rawName);
   if (!registry.servers.has(name)) throw new LoadoutError(`No shared server named "${name}"`);
   const users = usersOf(registry, name);
-  if (users.length > 1) throw new LoadoutError(`"${name}" is used by ${users.length} repositories (${users.join(', ')}); it must stay shared`);
+  if (users.length > 1)
+    throw new LoadoutError(`"${name}" is used by ${users.length} repositories (${users.join(', ')}); it must stay shared`);
   const target = repo ?? users[0];
   if (!target) throw new LoadoutError(`"${name}" is not attached anywhere; say which repository it belongs to`);
   if (users[0] && users[0] !== target) throw new LoadoutError(`"${name}" is used by ${users[0]}, not ${target}`);
@@ -323,7 +345,11 @@ export function writeServerSource(registry: Registry, rawName: string, yaml: str
   const own = checkServer(data, path, name).filter((p) => p.level === 'error');
   if (own.length) throw new LoadoutError(own.map((p) => p.message).join('\n'));
   const key = (p: Problem) => `${p.file}\0${p.message}`;
-  const before = new Set(loadRegistry(registry.root).problems.filter((p) => p.level === 'error').map(key));
+  const before = new Set(
+    loadRegistry(registry.root)
+      .problems.filter((p) => p.level === 'error')
+      .map(key),
+  );
   const previous = readFileSync(file, 'utf8');
   writeFileSync(file, yaml.endsWith('\n') ? yaml : `${yaml}\n`);
   const after = loadRegistry(registry.root).problems;

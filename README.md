@@ -209,5 +209,9 @@ Key là `host/owner/name`; dán thẳng git URL (`git@github.com:x/y.git`) cũng
 ## Phát triển
 
 ```bash
-npm run typecheck && npm test && npm run build && npm run validate
+npm install
+npx playwright install chromium   # một lần, cho test giao diện
+npm run ci                        # chạy toàn bộ: lint, format, typecheck, unit test, build, validate, smoke CLI, test UI
 ```
+
+CI trên GitHub chạy đúng lệnh `npm run ci` này trong một job. Release (`git push --follow-tags` sau `npm version …`) chạy lại `npm run ci`, đóng gói, cài thử chính file `.tgz` đó rồi mới tạo GitHub Release kèm checksum.

@@ -3,12 +3,39 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { Command } from 'commander';
-import { commitAdd, entryFromForm, makeRepoOnly, parsePairs, parseServerJson, previewAdd, removeServer, shareServer, type AddEntry } from './add.js';
+import {
+  commitAdd,
+  entryFromForm,
+  makeRepoOnly,
+  parsePairs,
+  parseServerJson,
+  previewAdd,
+  removeServer,
+  shareServer,
+  type AddEntry,
+} from './add.js';
 import { attachServers, BINDINGS_HEADER, detachServers } from './bindings-edit.js';
-import { defaultRegistryDir, expandHome, loadConfig, parseTargets, resolveRegistryRoot, saveConfig, stateDir, type Config } from './config.js';
+import {
+  defaultRegistryDir,
+  expandHome,
+  loadConfig,
+  parseTargets,
+  resolveRegistryRoot,
+  saveConfig,
+  stateDir,
+  type Config,
+} from './config.js';
 import { LoadoutError } from './errors.js';
 import { importRepo } from './importer.js';
-import { BINDINGS_FILE, formatProblems, knownRepos, loadRegistry, loadValidRegistry, SERVERS_DIR, type Registry } from './registry.js';
+import {
+  BINDINGS_FILE,
+  formatProblems,
+  knownRepos,
+  loadRegistry,
+  loadValidRegistry,
+  SERVERS_DIR,
+  type Registry,
+} from './registry.js';
 import { detectRepo, findGitRepos, normalizeRepoId, repoContext } from './repo.js';
 import { repoStatus, syncRepo, type SyncResult } from './sync.js';
 import type { RepoContext } from './types.js';
@@ -122,7 +149,8 @@ Examples:
       }
       config.registry = target;
     }
-    if (!config.registry) throw new LoadoutError('Pass --from <git-url> to clone your registry, or --registry <path> to an existing clone');
+    if (!config.registry)
+      throw new LoadoutError('Pass --from <git-url> to clone your registry, or --registry <path> to an existing clone');
     if (opts.workspace) config.workspaces = opts.workspace.map((w) => resolve(expandHome(w)));
     if (opts.targets) config.targets = parseTargets(opts.targets, '--targets');
     if (!existsSync(join(config.registry, SERVERS_DIR))) {
@@ -211,13 +239,17 @@ program
     if (own.length) throw new LoadoutError(`${own.join(', ')}: already active for ${repo.id} as repository-only server(s)`);
     const unknown = servers.filter((s) => !registry.servers.has(s));
     if (unknown.length) {
-      throw new LoadoutError(`Unknown shared server(s): ${unknown.join(', ')}. Available: ${[...registry.servers.keys()].join(', ')}`);
+      throw new LoadoutError(
+        `Unknown shared server(s): ${unknown.join(', ')}. Available: ${[...registry.servers.keys()].join(', ')}`,
+      );
     }
     for (const s of servers) {
       const required = requiredParams(registry.servers.get(s)!);
       const has = registry.bindings.get(repo.id)?.some((b) => b.server === s);
       if (required.length && !has) {
-        throw new LoadoutError(`${s} needs values for ${required.join(', ')}. Use: loadout set ${s} ${required.map((r) => `${r}=…`).join(' ')} --attach`);
+        throw new LoadoutError(
+          `${s} needs values for ${required.join(', ')}. Use: loadout set ${s} ${required.map((r) => `${r}=…`).join(' ')} --attach`,
+        );
       }
     }
     const added = attachServers(registry.bindingsPath, repo.id, servers);
@@ -244,9 +276,14 @@ program
     const { registry } = loadValidRegistry(root);
     const { repo, isCwd } = targetRepo(opts.repo);
     const removed = detachServers(registry.bindingsPath, repo.id, servers);
-    console.log(removed.length ? `detached from ${repo.id}: ${removed.join(', ')}` : `${repo.id} has none of: ${servers.join(', ')}`);
+    console.log(
+      removed.length ? `detached from ${repo.id}: ${removed.join(', ')}` : `${repo.id} has none of: ${servers.join(', ')}`,
+    );
     if (isCwd && opts.sync) runSync(loadValidRegistry(root).registry, [repo], config, {});
-    if (removed.length) console.log(`\nremember to commit the registry: git -C ${root} commit -am "detach ${removed.join(', ')} from ${repo.slug}"`);
+    if (removed.length)
+      console.log(
+        `\nremember to commit the registry: git -C ${root} commit -am "detach ${removed.join(', ')} from ${repo.slug}"`,
+      );
   });
 
 program
@@ -259,34 +296,56 @@ program
   .option('--attach', 'attach the server first if needed')
   .option('--no-sync', 'do not re-render configs of the current repository')
   .addHelpText('after', '\nExample:\n  loadout set postgres database=promotion_db password=env://PROMO_DB_PASSWORD')
-  .action((server: string, assignments: string[], opts: { unset?: string[]; repo?: string; attach?: boolean; sync: boolean }, cmd: Command) => {
-    const { config, root } = context(cmd);
-    const { registry } = loadValidRegistry(root);
-    const { repo, isCwd } = targetRepo(opts.repo);
-    const def = registry.servers.get(server);
-    if (!assignments.length && !opts.unset?.length) {
-      if (!def) throw new LoadoutError(`Unknown shared server "${server}"`);
-      const values = registry.bindings.get(repo.id)?.find((b) => b.server === server)?.params ?? {};
-      const specs = Object.entries(def.params ?? {});
-      if (!specs.length) return console.log(`${server} has no params`);
-      console.log(`${server} @ ${repo.id}`);
-      for (const [name, spec] of specs) {
-        const value = values[name] !== undefined ? String(values[name]) : spec.default !== undefined ? `(default: ${spec.default})` : spec.required ? '(REQUIRED, not set)' : '(not set)';
-        console.log(`  ${name.padEnd(16)} ${spec.type.padEnd(8)} ${value}${spec.description ? `   # ${spec.description}` : ''}`);
+  .action(
+    (
+      server: string,
+      assignments: string[],
+      opts: { unset?: string[]; repo?: string; attach?: boolean; sync: boolean },
+      cmd: Command,
+    ) => {
+      const { config, root } = context(cmd);
+      const { registry } = loadValidRegistry(root);
+      const { repo, isCwd } = targetRepo(opts.repo);
+      const def = registry.servers.get(server);
+      if (!assignments.length && !opts.unset?.length) {
+        if (!def) throw new LoadoutError(`Unknown shared server "${server}"`);
+        const values = registry.bindings.get(repo.id)?.find((b) => b.server === server)?.params ?? {};
+        const specs = Object.entries(def.params ?? {});
+        if (!specs.length) return console.log(`${server} has no params`);
+        console.log(`${server} @ ${repo.id}`);
+        for (const [name, spec] of specs) {
+          const value =
+            values[name] !== undefined
+              ? String(values[name])
+              : spec.default !== undefined
+                ? `(default: ${spec.default})`
+                : spec.required
+                  ? '(REQUIRED, not set)'
+                  : '(not set)';
+          console.log(
+            `  ${name.padEnd(16)} ${spec.type.padEnd(8)} ${value}${spec.description ? `   # ${spec.description}` : ''}`,
+          );
+        }
+        return;
       }
-      return;
-    }
-    const values: Record<string, unknown> = {};
-    for (const a of assignments) {
-      const i = a.indexOf('=');
-      if (i <= 0) throw new LoadoutError(`Expected key=value, got "${a.slice(0, 20)}"`);
-      values[a.slice(0, i)] = a.slice(i + 1);
-    }
-    for (const k of opts.unset ?? []) values[k] = '';
-    const params = updateBindingParams(registry, repo.id, server, values, { attach: opts.attach });
-    console.log(`${server} @ ${repo.id}: ${Object.entries(params).map(([k, v]) => `${k}=${v}`).join(' ') || '(defaults)'}`);
-    if (isCwd && opts.sync) runSync(loadValidRegistry(root).registry, [repo], config, {});
-  });
+      const values: Record<string, unknown> = {};
+      for (const a of assignments) {
+        const i = a.indexOf('=');
+        if (i <= 0) throw new LoadoutError(`Expected key=value, got "${a.slice(0, 20)}"`);
+        values[a.slice(0, i)] = a.slice(i + 1);
+      }
+      for (const k of opts.unset ?? []) values[k] = '';
+      const params = updateBindingParams(registry, repo.id, server, values, { attach: opts.attach });
+      console.log(
+        `${server} @ ${repo.id}: ${
+          Object.entries(params)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(' ') || '(defaults)'
+        }`,
+      );
+      if (isCwd && opts.sync) runSync(loadValidRegistry(root).registry, [repo], config, {});
+    },
+  );
 
 program
   .command('matrix')
@@ -302,7 +361,9 @@ program
     for (const id of repos) {
       const used = new Set((registry.bindings.get(id) ?? []).map((b) => b.server));
       const own = [...(registry.repoServers.get(id)?.keys() ?? [])].join(', ');
-      console.log([id.padEnd(width), ...servers.map((s) => (used.has(s) ? '✓' : '·').padEnd(s.length)), own].join('  ').trimEnd());
+      console.log(
+        [id.padEnd(width), ...servers.map((s) => (used.has(s) ? '✓' : '·').padEnd(s.length)), own].join('  ').trimEnd(),
+      );
     }
     const unused = servers.filter((s) => !repos.some((id) => registry.bindings.get(id)?.some((b) => b.server === s)));
     if (unused.length) console.log(`\nunused servers: ${unused.join(', ')}`);
@@ -358,7 +419,7 @@ program
   .option('--description <text>', 'description')
   .option('--attach', 'also attach to the current repository (or --repo) and sync it')
   .option('--repo <id>', 'repository to attach to (implies --attach), or owner of a --repo-only server')
-  .option('--repo-only', 'make it the repository\'s own server (repos/<repo>/), not shared')
+  .option('--repo-only', "make it the repository's own server (repos/<repo>/), not shared")
   .option('--overwrite', 'replace an existing server definition')
   .option('--dry-run', 'print the generated definition without writing')
   .addHelpText(
@@ -378,10 +439,13 @@ Examples:
     if (opts.url) {
       entries = [entryFromForm({ name: name ?? '', kind: 'remote', url: opts.url, pairs: opts.header })];
     } else if (command.length) {
-      entries = [{ name, cfg: { command: command[0], args: command.slice(1), ...(opts.env ? { env: parsePairs(opts.env) } : {}) } }];
+      entries = [
+        { name, cfg: { command: command[0], args: command.slice(1), ...(opts.env ? { env: parsePairs(opts.env) } : {}) } },
+      ];
     } else {
       const text = opts.json ?? (process.stdin.isTTY ? '' : readFileSync(0, 'utf8'));
-      if (!text.trim()) throw new LoadoutError('Give --json, --url, a command after --, or pipe JSON on stdin. See: loadout add --help');
+      if (!text.trim())
+        throw new LoadoutError('Give --json, --url, a command after --, or pipe JSON on stdin. See: loadout add --help');
       entries = parseServerJson(text);
     }
     let root: string | undefined; // absolute paths inside the current repo become {{ repo.root }}
@@ -412,7 +476,9 @@ Examples:
       console.log(`attached to ${repo.id}: ${added.join(', ') || '(already attached)'}`);
       if (isCwd) runSync(loadValidRegistry(registryRoot).registry, [repo], config, {});
     }
-    console.log(`\nremember to commit the registry: git -C ${registryRoot} add -A && git -C ${registryRoot} commit -m "add ${written.join(', ')}"`);
+    console.log(
+      `\nremember to commit the registry: git -C ${registryRoot} add -A && git -C ${registryRoot} commit -m "add ${written.join(', ')}"`,
+    );
   });
 
 program
@@ -450,7 +516,7 @@ program
 
 program
   .command('unshare')
-  .description('Turn a shared server used by a single repository into that repository\'s own server')
+  .description("Turn a shared server used by a single repository into that repository's own server")
   .argument('<name>', 'server name')
   .option('--repo <id>', 'repository that should own it (default: the one using it)')
   .action((name: string, opts: { repo?: string }, cmd: Command) => {
@@ -480,8 +546,14 @@ program
     console.log('  (local only; the token in the URL is required. Ctrl+C to stop)');
     if (opts.open) {
       const [bin, args] =
-        process.platform === 'darwin' ? ['open', [ui.url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', ui.url]] : ['xdg-open', [ui.url]];
-      spawn(bin, args as string[], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+        process.platform === 'darwin'
+          ? ['open', [ui.url]]
+          : process.platform === 'win32'
+            ? ['cmd', ['/c', 'start', '', ui.url]]
+            : ['xdg-open', [ui.url]];
+      spawn(bin, args as string[], { stdio: 'ignore', detached: true })
+        .on('error', () => {})
+        .unref();
     }
   });
 

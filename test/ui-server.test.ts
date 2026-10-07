@@ -22,7 +22,10 @@ describe('ui server', () => {
   afterAll(() => ui.close());
 
   const call = (path: string, init: RequestInit = {}, withToken = true) =>
-    fetch(base + path, { ...init, headers: { 'Content-Type': 'application/json', ...(withToken ? { 'X-Loadout-Token': token } : {}) } });
+    fetch(base + path, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(withToken ? { 'X-Loadout-Token': token } : {}) },
+    });
 
   it('requires the token for the page and the API', async () => {
     expect((await fetch(base + '/')).status).toBe(403);
@@ -34,26 +37,49 @@ describe('ui server', () => {
   it('adds a server, attaches it, and reports errors as 400', async () => {
     const add = await call('/api/servers', {
       method: 'POST',
-      body: JSON.stringify({ mode: 'json', text: '{"mcpServers":{"ctx":{"url":"https://c/mcp?token=abc"}}}', attach: ['https://github.com/acme/app.git'] }),
+      body: JSON.stringify({
+        mode: 'json',
+        text: '{"mcpServers":{"ctx":{"url":"https://c/mcp?token=abc"}}}',
+        attach: ['https://github.com/acme/app.git'],
+      }),
     });
     expect(await add.json()).toEqual({ written: ['ctx'], attached: ['github.com/acme/app'], needsParams: [] });
     expect(readFileSync(join(root, 'servers/ctx.yaml'), 'utf8')).not.toContain('abc');
     expect(readFileSync(join(root, 'bindings.yaml'), 'utf8')).toContain('github.com/acme/app: [ctx]');
 
     const state = await (await call('/api/state')).json();
-    expect(state.repos).toEqual([{ id: 'github.com/acme/app', servers: ['ctx'], own: [], params: { ctx: {} }, clones: [], env: [{ name: 'CTX_TOKEN', set: false }] }]);
+    expect(state.repos).toEqual([
+      {
+        id: 'github.com/acme/app',
+        servers: ['ctx'],
+        own: [],
+        params: { ctx: {} },
+        clones: [],
+        env: [{ name: 'CTX_TOKEN', set: false }],
+      },
+    ]);
 
-    const dup = await call('/api/servers', { method: 'POST', body: JSON.stringify({ mode: 'form', form: { name: 'ctx', kind: 'remote', url: 'https://x' } }) });
+    const dup = await call('/api/servers', {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'form', form: { name: 'ctx', kind: 'remote', url: 'https://x' } }),
+    });
     expect(dup.status).toBe(400);
     expect((await dup.json()).error).toMatch(/already exists/);
 
-    const detach = await call('/api/bindings', { method: 'POST', body: JSON.stringify({ repo: 'github.com/acme/app', server: 'ctx', attached: false }) });
+    const detach = await call('/api/bindings', {
+      method: 'POST',
+      body: JSON.stringify({ repo: 'github.com/acme/app', server: 'ctx', attached: false }),
+    });
     expect(detach.status).toBe(200);
     expect((await call('/api/servers/ctx', { method: 'DELETE' })).status).toBe(200);
   });
 
   it('sets per-repository params and edits server definitions', async () => {
-    write(root, 'servers/pg.yaml', 'name: pg\ntransport: { type: http, url: "https://pg/{{ params.db }}" }\nparams:\n  db: { type: string, required: true }\n');
+    write(
+      root,
+      'servers/pg.yaml',
+      'name: pg\ntransport: { type: http, url: "https://pg/{{ params.db }}" }\nparams:\n  db: { type: string, required: true }\n',
+    );
     const post = (path: string, body: unknown) => call(path, { method: 'POST', body: JSON.stringify(body) });
     const direct = await post('/api/bindings', { repo: 'github.com/acme/app', server: 'pg', attached: true });
     expect((await direct.json()).error).toMatch(/needs values for db/);
@@ -64,29 +90,46 @@ describe('ui server', () => {
     expect(await ok.json()).toEqual({ params: { db: 'promo' } });
     const state = await (await call('/api/state')).json();
     expect(state.repos[0].params.pg).toEqual({ db: 'promo' });
-    expect(state.servers.find((s: { name: string }) => s.name === 'pg').params).toEqual([{ name: 'db', type: 'string', required: true }]);
+    expect(state.servers.find((s: { name: string }) => s.name === 'pg').params).toEqual([
+      { name: 'db', type: 'string', required: true },
+    ]);
 
     const src = await (await call('/api/servers/pg/source')).json();
     expect(src.path).toBe('servers/pg.yaml');
-    const broken = await call('/api/servers/pg/source', { method: 'PUT', body: JSON.stringify({ yaml: src.yaml.replace('params:\n  db: { type: string, required: true }\n', '') }) });
+    const broken = await call('/api/servers/pg/source', {
+      method: 'PUT',
+      body: JSON.stringify({ yaml: src.yaml.replace('params:\n  db: { type: string, required: true }\n', '') }),
+    });
     expect(broken.status).toBe(400);
     expect((await broken.json()).error).toMatch(/undeclared param "db"/);
     await post('/api/bindings', { repo: 'github.com/acme/app', server: 'pg', attached: false });
   });
 
   it('adds, shares and deletes repository-only servers', async () => {
-    const body = { mode: 'form', repo: 'git@github.com:acme/svc.git', form: { name: 'db', kind: 'command', command: 'node tools/db.js' } };
-    expect(await (await call('/api/servers', { method: 'POST', body: JSON.stringify(body) })).json()).toEqual({ written: ['db'], attached: ['github.com/acme/svc'], needsParams: [] });
+    const body = {
+      mode: 'form',
+      repo: 'git@github.com:acme/svc.git',
+      form: { name: 'db', kind: 'command', command: 'node tools/db.js' },
+    };
+    expect(await (await call('/api/servers', { method: 'POST', body: JSON.stringify(body) })).json()).toEqual({
+      written: ['db'],
+      attached: ['github.com/acme/svc'],
+      needsParams: [],
+    });
     let state = await (await call('/api/state')).json();
     expect(state.repoOnly.map((s: { name: string; repo: string }) => `${s.repo}/${s.name}`)).toEqual(['github.com/acme/svc/db']);
     expect(state.repos.find((r: { id: string }) => r.id === 'github.com/acme/svc').own).toEqual(['db']);
 
-    expect((await call('/api/share', { method: 'POST', body: JSON.stringify({ repo: 'github.com/acme/svc', name: 'db' }) })).status).toBe(200);
+    expect(
+      (await call('/api/share', { method: 'POST', body: JSON.stringify({ repo: 'github.com/acme/svc', name: 'db' }) })).status,
+    ).toBe(200);
     state = await (await call('/api/state')).json();
     expect(state.repoOnly).toEqual([]);
     expect(state.servers.find((s: { name: string }) => s.name === 'db').usedBy).toEqual(['github.com/acme/svc']);
 
-    expect(await (await call('/api/unshare', { method: 'POST', body: JSON.stringify({ name: 'db' }) })).json()).toEqual({ repo: 'github.com/acme/svc' });
+    expect(await (await call('/api/unshare', { method: 'POST', body: JSON.stringify({ name: 'db' }) })).json()).toEqual({
+      repo: 'github.com/acme/svc',
+    });
     expect((await call('/api/servers/db?repo=github.com/acme/svc', { method: 'DELETE' })).status).toBe(200);
     state = await (await call('/api/state')).json();
     expect(state.repoOnly).toEqual([]);

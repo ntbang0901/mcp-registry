@@ -8,7 +8,15 @@ const servers: ResolvedServer[] = [
     transport: {
       type: 'http',
       url: [{ kind: 'text', value: 'https://mcp.linkup.so/mcp' }],
-      headers: [['Authorization', [{ kind: 'text', value: 'Bearer ' }, { kind: 'env', name: 'LINKUP_API_KEY' }]]],
+      headers: [
+        [
+          'Authorization',
+          [
+            { kind: 'text', value: 'Bearer ' },
+            { kind: 'env', name: 'LINKUP_API_KEY' },
+          ],
+        ],
+      ],
     },
   },
   {

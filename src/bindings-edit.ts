@@ -100,7 +100,9 @@ export function setBindingParams(path: string, id: string, server: string, param
   if (isMap(pair.value)) {
     for (const item of pair.value.items) {
       const name = String(isScalar(item.key) ? item.key.value : item.key);
-      const value = (item.value as { toJSON?: () => unknown } | null)?.toJSON?.() as { params?: Record<string, ParamValue> } | null;
+      const value = (item.value as { toJSON?: () => unknown } | null)?.toJSON?.() as {
+        params?: Record<string, ParamValue>;
+      } | null;
       current.set(name, value?.params ?? {});
     }
   } else {

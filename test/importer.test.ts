@@ -20,7 +20,11 @@ describe('convertEntry', () => {
       { url: 'https://x', headers: { Authorization: 'Bearer ${env:SVC_KEY}', 'X-Trace': 'on' } },
       repo,
     );
-    expect(def.transport).toEqual({ type: 'http', url: 'https://x', headers: { Authorization: 'Bearer {{ params.SVC_KEY }}', 'X-Trace': 'on' } });
+    expect(def.transport).toEqual({
+      type: 'http',
+      url: 'https://x',
+      headers: { Authorization: 'Bearer {{ params.SVC_KEY }}', 'X-Trace': 'on' },
+    });
     expect(notes.filter((n) => n.includes('NOT copied'))).toEqual([]);
   });
 
@@ -44,7 +48,11 @@ describe('convertEntry', () => {
     expect(JSON.stringify(def)).not.toMatch(/abc|def"|ghp_x/);
 
     const py = convertEntry('cg', { command: 'uvx', args: ['code-graph-mcp==1.2.4', '--verbose'] }, repo).def;
-    expect(py.transport).toEqual({ type: 'stdio', package: { registry: 'pypi', name: 'code-graph-mcp', version: '1.2.4' }, args: ['--verbose'] });
+    expect(py.transport).toEqual({
+      type: 'stdio',
+      package: { registry: 'pypi', name: 'code-graph-mcp', version: '1.2.4' },
+      args: ['--verbose'],
+    });
   });
 
   it('keeps unpinned packages as raw commands with a note', () => {

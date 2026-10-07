@@ -33,18 +33,22 @@ export const claudeCode: Adapter = {
   id: 'claude-code',
   path: '.mcp.json',
   render: (servers) =>
-    renderMcpServers(servers, formatter((n) => `\${${n}}`), (s, fmt) => {
-      const t = s.transport;
-      if (t.type === 'http') {
-        return { type: 'http', url: fmt(t.url), ...(t.headers.length ? { headers: fromEntries(t.headers, fmt) } : {}) };
-      }
-      return {
-        type: 'stdio',
-        command: fmt(t.command),
-        args: t.args.map(fmt),
-        ...(t.env.length ? { env: fromEntries(t.env, fmt) } : {}),
-      };
-    }),
+    renderMcpServers(
+      servers,
+      formatter((n) => `\${${n}}`),
+      (s, fmt) => {
+        const t = s.transport;
+        if (t.type === 'http') {
+          return { type: 'http', url: fmt(t.url), ...(t.headers.length ? { headers: fromEntries(t.headers, fmt) } : {}) };
+        }
+        return {
+          type: 'stdio',
+          command: fmt(t.command),
+          args: t.args.map(fmt),
+          ...(t.env.length ? { env: fromEntries(t.env, fmt) } : {}),
+        };
+      },
+    ),
 };
 
 /** Cursor project config: .cursor/mcp.json, `${env:VAR}` interpolation. */
@@ -52,17 +56,21 @@ export const cursor: Adapter = {
   id: 'cursor',
   path: '.cursor/mcp.json',
   render: (servers) =>
-    renderMcpServers(servers, formatter((n) => `\${env:${n}}`), (s, fmt) => {
-      const t = s.transport;
-      if (t.type === 'http') {
-        return { url: fmt(t.url), ...(t.headers.length ? { headers: fromEntries(t.headers, fmt) } : {}) };
-      }
-      return {
-        command: fmt(t.command),
-        args: t.args.map(fmt),
-        ...(t.env.length ? { env: fromEntries(t.env, fmt) } : {}),
-      };
-    }),
+    renderMcpServers(
+      servers,
+      formatter((n) => `\${env:${n}}`),
+      (s, fmt) => {
+        const t = s.transport;
+        if (t.type === 'http') {
+          return { url: fmt(t.url), ...(t.headers.length ? { headers: fromEntries(t.headers, fmt) } : {}) };
+        }
+        return {
+          command: fmt(t.command),
+          args: t.args.map(fmt),
+          ...(t.env.length ? { env: fromEntries(t.env, fmt) } : {}),
+        };
+      },
+    ),
 };
 
 export const ADAPTERS: Record<AdapterId, Adapter> = { 'claude-code': claudeCode, cursor };

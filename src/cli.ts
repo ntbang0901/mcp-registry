@@ -12,9 +12,11 @@ import {
   previewAdd,
   removeServer,
   shareServer,
+  usersOf,
+  writeServerSource,
   type AddEntry,
 } from './add.js';
-import { attachServers, BINDINGS_HEADER, detachServers } from './bindings-edit.js';
+import { attachServers, BINDINGS_HEADER, detachServers, USER_SCOPE } from './bindings-edit.js';
 import {
   defaultRegistryDir,
   expandHome,
@@ -33,14 +35,17 @@ import {
   knownRepos,
   loadRegistry,
   loadValidRegistry,
+  serverFileContent,
+  serverPath,
   SERVERS_DIR,
   type Registry,
 } from './registry.js';
 import { detectProject, findProjects, normalizeRepoId, repoContext, workspaceOf } from './repo.js';
 import { repoStatus, syncRepo, type SyncResult } from './sync.js';
-import type { RepoContext } from './types.js';
+import type { RepoContext, ServerDef } from './types.js';
 import { requiredParams, updateBindingParams } from './params.js';
 import { startUi } from './ui-server.js';
+import { importUser, syncUser, userStatus, type EntryOutcome, type UserEntryStatus } from './user.js';
 import { State } from './writer.js';
 
 const VERSION: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -463,6 +468,22 @@ interface AddOpts {
   dryRun?: boolean;
 }
 
+/** Server definitions given on the command line: --url, a command after --, --json, or JSON on stdin. */
+function entriesFrom(
+  name: string | undefined,
+  command: string[],
+  opts: Pick<AddOpts, 'url' | 'header' | 'env' | 'json'>,
+  help: string,
+): AddEntry[] {
+  if (opts.url) return [entryFromForm({ name: name ?? '', kind: 'remote', url: opts.url, pairs: opts.header })];
+  if (command.length) {
+    return [{ name, cfg: { command: command[0], args: command.slice(1), ...(opts.env ? { env: parsePairs(opts.env) } : {}) } }];
+  }
+  const text = opts.json ?? (process.stdin.isTTY ? '' : readFileSync(0, 'utf8'));
+  if (!text.trim()) throw new LoadoutError(`Give --json, --url, a command after --, or pipe JSON on stdin. See: ${help}`);
+  return parseServerJson(text);
+}
+
 program
   .command('add')
   .description('Add MCP server(s) to the registry from pasted JSON, a URL, or a command')
@@ -491,19 +512,7 @@ Examples:
   .action((name: string | undefined, command: string[], opts: AddOpts, cmd: Command) => {
     const { config, root: registryRoot } = context(cmd);
     const { registry } = loadValidRegistry(registryRoot);
-    let entries: AddEntry[];
-    if (opts.url) {
-      entries = [entryFromForm({ name: name ?? '', kind: 'remote', url: opts.url, pairs: opts.header })];
-    } else if (command.length) {
-      entries = [
-        { name, cfg: { command: command[0], args: command.slice(1), ...(opts.env ? { env: parsePairs(opts.env) } : {}) } },
-      ];
-    } else {
-      const text = opts.json ?? (process.stdin.isTTY ? '' : readFileSync(0, 'utf8'));
-      if (!text.trim())
-        throw new LoadoutError('Give --json, --url, a command after --, or pipe JSON on stdin. See: loadout add --help');
-      entries = parseServerJson(text);
-    }
+    const entries = entriesFrom(name, command, opts, 'loadout add --help');
     let root: string | undefined; // absolute paths inside the current repo become {{ repo.root }}
     try {
       root = here().root;
@@ -579,6 +588,321 @@ program
     const { root } = context(cmd);
     const target = makeRepoOnly(loadValidRegistry(root).registry, name, opts.repo ? normalizeRepoId(opts.repo) : undefined);
     console.log(`moved servers/${name}.yaml → repos/${target}/${name}.yaml`);
+  });
+
+// ---- user scope: servers for every project on this machine (~/.claude.json, ~/.cursor/mcp.json) ----
+
+const USER_OUTCOME: Record<EntryOutcome, string> = {
+  added: 'added',
+  updated: 'updated',
+  unchanged: 'up to date',
+  replaced: 'replaced (backup of the file: .bak)',
+  conflict: 'SKIPPED — an entry with this name was not written by loadout (use --force, or loadout user import)',
+  removed: 'removed',
+  kept: 'left alone (edited by hand)',
+};
+
+function runUserSync(registry: Registry, config: Config, opts: { force?: boolean; dryRun?: boolean }) {
+  const state = State.load(stateDir());
+  const r = syncUser(registry, config.targets, state, opts);
+  if (!opts.dryRun) state.save();
+  console.log(`user scope${opts.dryRun ? '  [dry run]' : ''}: ${r.servers.join(', ') || '(no servers)'}`);
+  for (const f of r.files) {
+    console.log(`  ${f.path}`);
+    if (!f.entries.length) console.log('    (nothing to do)');
+    for (const e of f.entries) console.log(`    ${e.name.padEnd(20)} ${USER_OUTCOME[e.outcome]}`);
+    if (f.unmanaged.length) console.log(`    not managed by loadout: ${f.unmanaged.join(', ')}`);
+  }
+  if (r.missingEnv.length) console.log(`  ! not set in this shell: ${r.missingEnv.join(', ')}`);
+  if (r.files.some((f) => f.entries.some((e) => e.outcome !== 'unchanged')) && !opts.dryRun)
+    console.log('  restart Claude Code / Cursor to load the changes');
+  if (r.files.some((f) => f.entries.some((e) => e.outcome === 'conflict'))) process.exitCode = 1;
+}
+
+const commitHint = (root: string, message: string) =>
+  console.log(`\nremember to commit the registry: git -C ${root} add -A && git -C ${root} commit -m "${message}"`);
+
+const user = program
+  .command('user')
+  .description('Manage MCP servers for every project on this machine (~/.claude.json, ~/.cursor/mcp.json)')
+  .addHelpText(
+    'after',
+    `
+Examples:
+  loadout user                                       # what is installed, and where
+  loadout user import                                # take over the servers already in ~/.claude.json, ~/.cursor/mcp.json
+  loadout user add context7 --url https://mcp.context7.com/mcp
+  loadout user add linkup --url https://mcp.linkup.so/mcp --header "Authorization=Bearer sk-..."   # key → env var
+  loadout user add memory -- npx -y @modelcontextprotocol/server-memory@2025.9.25
+  loadout user add context7 linkup                   # servers already in the registry
+  loadout user add context7 --from-projects          # and drop it from every project that uses it as is
+  loadout user update context7 --url https://mcp.context7.com/mcp/v2
+  loadout user remove context7`,
+  );
+
+user
+  .command('list', { isDefault: true })
+  .description('Show the user-scope servers and whether the client configs are up to date')
+  .action((_opts: unknown, cmd: Command) => {
+    const { config, root } = context(cmd);
+    const { registry } = loadValidRegistry(root);
+    const state = State.load(stateDir());
+    const label: Record<UserEntryStatus, string> = {
+      ok: 'up to date',
+      missing: 'missing — run loadout user sync',
+      stale: 'outdated — run loadout user sync',
+      modified: 'differs (hand-written or edited) — loadout user sync --force to replace',
+      orphan: 'no longer in user scope — run loadout user sync',
+    };
+    if (!registry.userBindings.length) console.log('No servers in user scope yet. Add one with: loadout user add <name> …');
+    for (const b of registry.userBindings) {
+      const def = registry.servers.get(b.server)!;
+      const projects = usersOf(registry, b.server);
+      console.log(
+        `${b.server.padEnd(20)} ${def.description ?? ''}${projects.length ? `   (also attached to ${projects.length} project(s))` : ''}`,
+      );
+    }
+    let dirty = false;
+    for (const s of userStatus(registry, config.targets, state)) {
+      console.log(`\n${s.path}`);
+      for (const e of s.entries) {
+        dirty ||= e.status !== 'ok';
+        console.log(`  ${e.name.padEnd(20)} ${label[e.status]}`);
+      }
+      if (s.unmanaged.length) console.log(`  not managed by loadout: ${s.unmanaged.join(', ')}   (loadout user import)`);
+    }
+    if (dirty) process.exitCode = 1;
+  });
+
+interface UserAddOpts extends Pick<AddOpts, 'url' | 'header' | 'env' | 'json' | 'description'> {
+  fromProjects?: boolean;
+  sync: boolean;
+  dryRun?: boolean;
+}
+
+user
+  .command('add')
+  .description('Add servers to user scope: existing registry servers by name, or a new one from --url / -- command / JSON')
+  .argument('[names...]', 'server names (a new server: one name, then optionally -- <command…>)')
+  .option('--url <url>', 'remote (HTTP) server URL')
+  .option('--header <k=v...>', 'HTTP header for --url (secrets become env vars)')
+  .option('--env <k=v...>', 'environment variable for a command (secrets become env vars)')
+  .option('--json <text>', 'MCP JSON config ({"mcpServers": ...} or one entry); also read from stdin')
+  .option('--description <text>', 'description')
+  .option('--from-projects', 'also detach it from every project that uses it without project-specific params')
+  .option('--no-sync', 'do not rewrite ~/.claude.json and ~/.cursor/mcp.json')
+  .option('--dry-run', 'print what would change without writing')
+  .action((args: string[], opts: UserAddOpts, cmd: Command) => {
+    const { config, root } = context(cmd);
+    let { registry } = loadValidRegistry(root);
+    // `loadout user add name -- cmd args…`: commander folds the command into the names.
+    const dash = process.argv.indexOf('--');
+    const command = dash === -1 ? [] : process.argv.slice(dash + 1);
+    const names = command.length ? args.slice(0, args.length - command.length) : args;
+    const defining = !!(opts.url || opts.json || command.length || (!names.length && !process.stdin.isTTY));
+    let servers = names;
+    if (defining) {
+      if (names.length > 1) throw new LoadoutError('Define one new server at a time');
+      const entries = entriesFrom(names[0], command, opts, 'loadout user add --help');
+      const preview = previewAdd(registry, entries, { name: names[0], description: opts.description });
+      for (const s of preview.servers) {
+        if (s.exists) {
+          throw new LoadoutError(
+            `Server "${s.name}" already exists. Add it by name (loadout user add ${s.name}) or change it with loadout user update ${s.name} …`,
+          );
+        }
+        console.log(`--- ${s.path}`);
+        console.log(s.yaml.trimEnd());
+        for (const p of s.problems) console.log(`  ${p.level}: ${p.message}`);
+      }
+      for (const n of preview.notes) console.log(`! ${n}`);
+      if (opts.dryRun) return;
+      servers = commitAdd(registry, preview);
+      registry = loadValidRegistry(root).registry;
+    } else {
+      if (!names.length) throw new LoadoutError('Name the servers to add, or define one with --url, --json or -- <command>');
+      const unknown = names.filter((n) => !registry.servers.has(n));
+      if (unknown.length) {
+        throw new LoadoutError(
+          `Unknown server(s): ${unknown.join(', ')}. Define a new one with --url, --json or -- <command>` +
+            (registry.servers.size ? `; existing: ${[...registry.servers.keys()].join(', ')}` : ''),
+        );
+      }
+    }
+    for (const s of servers) {
+      const required = requiredParams(registry.servers.get(s)!);
+      if (required.length) {
+        throw new LoadoutError(
+          `${s} needs values for ${required.join(', ')}: those differ per project, so attach it to projects instead (loadout set ${s} …)`,
+        );
+      }
+    }
+    if (opts.dryRun) return console.log(`would add to user scope: ${servers.join(', ')}`);
+    const added = attachServers(registry.bindingsPath, USER_SCOPE, servers);
+    console.log(added.length ? `added to user scope: ${added.join(', ')}` : `already in user scope: ${servers.join(', ')}`);
+    const reloaded = loadRegistry(root);
+    const errors = reloaded.problems.filter((p) => p.level === 'error');
+    if (errors.length) {
+      console.error(`bindings.yaml now has errors:\n${formatProblems(errors)}`);
+      process.exitCode = 1;
+      return;
+    }
+    registry = reloaded.registry;
+    if (opts.fromProjects) {
+      const detached: string[] = [];
+      for (const s of servers) {
+        for (const [id, bindings] of registry.bindings) {
+          const b = bindings.find((x) => x.server === s);
+          if (!b) continue;
+          if (Object.keys(b.params).length) {
+            console.log(`  kept in ${id}: ${s} has project-specific params there`);
+            continue;
+          }
+          detachServers(registry.bindingsPath, id, [s]);
+          detached.push(id);
+        }
+      }
+      if (detached.length) {
+        registry = loadValidRegistry(root).registry;
+        console.log(`detached from ${detached.length} project(s); updating their configs:`);
+        if (opts.sync && config.workspaces.length) {
+          const touched = new Set(detached);
+          runSync(
+            registry,
+            localClones(registry, config).clones.filter((c) => touched.has(c.id)),
+            config,
+            {},
+          );
+        }
+      }
+    }
+    if (opts.sync) runUserSync(registry, config, {});
+    commitHint(root, `user scope: add ${servers.join(', ')}`);
+  });
+
+user
+  .command('update')
+  .description('Change a user-scope server: replace its definition and/or set its param values, then sync')
+  .argument('<name>', 'server name')
+  .argument('[command...]', 'new local server command, after --')
+  .option('--url <url>', 'new remote (HTTP) server URL')
+  .option('--header <k=v...>', 'HTTP header for --url (secrets become env vars)')
+  .option('--env <k=v...>', 'environment variable for a command (secrets become env vars)')
+  .option('--json <text>', 'new MCP JSON config for this server')
+  .option('--description <text>', 'description')
+  .option('--set <k=v...>', 'param values for user scope (secrets: key=env://VAR_NAME; empty value: back to default)')
+  .option('--no-sync', 'do not rewrite ~/.claude.json and ~/.cursor/mcp.json')
+  .action((name: string, command: string[], opts: UserAddOpts & { set?: string[] }, cmd: Command) => {
+    const { config, root } = context(cmd);
+    let { registry } = loadValidRegistry(root);
+    if (!registry.userBindings.some((b) => b.server === name))
+      throw new LoadoutError(`"${name}" is not in user scope (loadout user add ${name} …)`);
+    if (!opts.url && !opts.json && !command.length && !opts.set && !opts.description)
+      throw new LoadoutError('Nothing to change: give --url, -- <command>, --json, --description or --set k=v');
+    if (opts.url || opts.json || command.length || opts.description) {
+      let def: ServerDef;
+      if (opts.url || opts.json || command.length) {
+        const preview = previewAdd(registry, entriesFrom(name, command, opts, 'loadout user update --help'), {
+          name,
+          description: opts.description ?? registry.servers.get(name)!.description,
+        });
+        def = preview.servers[0].def;
+        for (const n of preview.notes) console.log(`! ${n}`);
+      } else {
+        def = { ...registry.servers.get(name)!, description: opts.description };
+      }
+      const projects = usersOf(registry, name);
+      writeServerSource(registry, name, serverFileContent(registry, serverPath(registry, name), def));
+      console.log(`updated ${SERVERS_DIR}/${name}.yaml`);
+      if (projects.length) console.log(`  also used by ${projects.join(', ')} — run loadout sync --all to update them`);
+      registry = loadValidRegistry(root).registry;
+    }
+    if (opts.set) {
+      const values: Record<string, unknown> = {};
+      for (const a of opts.set) {
+        const i = a.indexOf('=');
+        if (i <= 0) throw new LoadoutError(`Expected key=value, got "${a.slice(0, 20)}"`);
+        values[a.slice(0, i)] = a.slice(i + 1);
+      }
+      const params = updateBindingParams(registry, USER_SCOPE, name, values);
+      console.log(
+        `${name} @ user: ${
+          Object.entries(params)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(' ') || '(defaults)'
+        }`,
+      );
+      registry = loadValidRegistry(root).registry;
+    }
+    if (opts.sync) runUserSync(registry, config, {});
+    commitHint(root, `user scope: update ${name}`);
+  });
+
+user
+  .command('remove')
+  .description('Remove servers from user scope (and from ~/.claude.json, ~/.cursor/mcp.json)')
+  .argument('<names...>', 'server names')
+  .option('--delete', 'also delete the server definition when no project uses it')
+  .option('--no-sync', 'do not rewrite ~/.claude.json and ~/.cursor/mcp.json')
+  .action((names: string[], opts: { delete?: boolean; sync: boolean }, cmd: Command) => {
+    const { config, root } = context(cmd);
+    const { registry } = loadValidRegistry(root);
+    const removed = detachServers(registry.bindingsPath, USER_SCOPE, names);
+    console.log(removed.length ? `removed from user scope: ${removed.join(', ')}` : `not in user scope: ${names.join(', ')}`);
+    let reloaded = loadValidRegistry(root).registry;
+    if (opts.delete) {
+      for (const n of removed) {
+        const projects = usersOf(reloaded, n);
+        if (projects.length) {
+          console.log(`  kept ${SERVERS_DIR}/${n}.yaml: used by ${projects.join(', ')}`);
+          continue;
+        }
+        removeServer(reloaded, n);
+        console.log(`  deleted ${SERVERS_DIR}/${n}.yaml`);
+      }
+      reloaded = loadValidRegistry(root).registry;
+    }
+    if (opts.sync) runUserSync(reloaded, config, {});
+    if (removed.length) commitHint(root, `user scope: remove ${removed.join(', ')}`);
+  });
+
+user
+  .command('sync')
+  .description('Write the user-scope servers into ~/.claude.json and ~/.cursor/mcp.json (other entries are kept)')
+  .option('--force', 'replace entries with the same name that loadout did not write (a .bak of the file is kept)')
+  .option('--dry-run', 'show what would change without writing')
+  .action((opts: { force?: boolean; dryRun?: boolean }, cmd: Command) => {
+    const { config, root } = context(cmd);
+    const { registry, warnings } = loadValidRegistry(root);
+    printWarnings(warnings);
+    runUserSync(registry, config, opts);
+  });
+
+user
+  .command('import')
+  .description('Take over the servers already in ~/.claude.json and ~/.cursor/mcp.json (API keys are not copied)')
+  .option('--dry-run', 'show what would be imported without writing')
+  .option('--no-sync', 'only import; do not rewrite the client configs')
+  .action((opts: { dryRun?: boolean; sync: boolean }, cmd: Command) => {
+    const { config, root } = context(cmd);
+    const { registry } = loadValidRegistry(root);
+    const state = State.load(stateDir());
+    const r = importUser(registry, config.targets, state, opts);
+    if (!r.sources.length) return console.log('No hand-written servers in the user-scope client configs.');
+    const list = (xs: string[]) => xs.join(', ') || '-';
+    console.log(`read:      ${r.sources.join(', ')}${opts.dryRun ? '  [dry run]' : ''}`);
+    if (r.created.length) console.log(`new:       ${list(r.created)}`);
+    if (r.reused.length) console.log(`existing:  ${list(r.reused)}`);
+    if (r.skipped.length) console.log(`skipped:   ${list(r.skipped)}`);
+    console.log(`user scope: ${opts.dryRun ? 'would add' : 'added'} ${list(r.added)}`);
+    for (const n of r.notes) console.log(`! ${n}`);
+    if (opts.dryRun) return;
+    // The imported entries are replaced by loadout's rendering of them (same server; secrets as env refs).
+    if (opts.sync) {
+      console.log('');
+      runUserSync(loadValidRegistry(root).registry, config, { force: true });
+    }
+    commitHint(root, 'import user-scope MCP servers');
   });
 
 program

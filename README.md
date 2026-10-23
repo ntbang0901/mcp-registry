@@ -13,6 +13,8 @@ mcp-registry/                     repo-a/                       repo-b/
 
 Repo không commit gì liên quan tới MCP. Mọi thay đổi (thêm/bớt server, đổi version, đổi key) làm ở registry rồi `loadout sync`.
 
+Server cả máy cùng dùng (context7, GitHub, memory…) không cần lặp lại ở từng project: đưa lên **user scope** bằng `loadout user add`, công cụ ghi thẳng vào `~/.claude.json` và `~/.cursor/mcp.json`. Xem [MCP dùng cho mọi project trên máy](#mcp-dùng-cho-mọi-project-trên-máy-user-scope).
+
 Thiết kế và lý do: [`docs/architecture-brainstorm.md`](docs/architecture-brainstorm.md).
 
 ## Cài đặt
@@ -97,6 +99,54 @@ cd ~/.local/share/loadout/registry && git add -A && git commit -m "Import my-api
 ```
 
 Sau đó mở `loadout ui` để quản lý tiếp (nút **Commit** trên UI làm hộ phần commit; push vẫn dùng git). Trên máy khác: chạy lại 2 lệnh cài đặt ở trên, rồi `loadout sync --all`.
+
+## MCP dùng cho mọi project trên máy (user scope)
+
+Khi nhiều project dùng chung một bộ MCP, quản lý ở cấp máy thay vì lặp lại trong từng `.mcp.json`:
+
+```bash
+loadout user                     # server nào đang ở user scope, file nào đã cập nhật
+loadout user import              # nhận quản lý các server đang có sẵn trong ~/.claude.json, ~/.cursor/mcp.json
+
+# thêm
+loadout user add context7 --url https://mcp.context7.com/mcp
+loadout user add linkup --url https://mcp.linkup.so/mcp --header "Authorization=Bearer sk-..."   # key → ${LINKUP_TOKEN}
+loadout user add memory -- npx -y @modelcontextprotocol/server-memory@2025.9.25
+pbpaste | loadout user add       # JSON copy từ README
+loadout user add context7 linkup # server đã có trong registry
+
+# sửa
+loadout user update context7 --url https://mcp.context7.com/mcp/v2
+loadout user update linkup --set apiKey=env://MY_LINKUP_KEY
+
+# xoá
+loadout user remove memory               # bỏ khỏi user scope và khỏi file của client
+loadout user remove memory --delete      # xoá luôn định nghĩa nếu không project nào dùng
+
+# gom từ các project lên cấp máy
+loadout user add context7 --from-projects   # thêm vào user scope, gỡ khỏi mọi project dùng nó không kèm tham số riêng, sync lại các project đó
+```
+
+Mỗi lệnh ghi lại `~/.claude.json` (khoá `mcpServers` cấp cao nhất = user scope của Claude Code) và `~/.cursor/mcp.json` theo `targets` trong config; khởi động lại Claude Code / Cursor để nạp. Trong registry, danh sách nằm ở khoá `user:` của `bindings.yaml`:
+
+```yaml
+user: [context7, linkup]                 # hoặc dạng map khi cần tham số: { linkup: { params: { apiKey: env://MY_KEY } } }
+repositories:
+  github.com/acme/api: [postgres]
+```
+
+Cách ghi file:
+
+- Chỉ đụng tới các entry trong `mcpServers` do `loadout` ghi (theo dõi bằng hash trong `state.json`); mọi cài đặt khác của client và các server bạn tự thêm được giữ nguyên. File được ghi nguyên khối (ghi file tạm rồi đổi tên).
+- Entry trùng tên mà không do `loadout` ghi → bỏ qua, báo `SKIPPED`; `loadout user sync --force` thay nó (giữ bản `.bak` của cả file), hoặc `loadout user import` để đưa nó vào registry trước.
+- Entry `loadout` đã ghi nhưng bạn sửa tay rồi bỏ khỏi user scope → giữ lại, không xoá.
+- Secret vẫn chỉ là tham chiếu biến môi trường (`${NAME}` cho Claude Code, `${env:NAME}` cho Cursor); `user import` thay key thật bằng biến và in tên biến cần export.
+
+Giới hạn:
+
+- Server dùng `{{ repo.* }}` (ví dụ `--project-root {{ repo.root }}`) hoặc có tham số bắt buộc khác nhau theo project không đưa lên user scope được — để chúng ở project.
+- Server vừa ở user scope vừa gắn vào một project: trong project đó Claude Code dùng bản của project (`validate` cảnh báo).
+- Giao diện web chưa có trang cho user scope; dùng CLI.
 
 ## Giao diện web
 

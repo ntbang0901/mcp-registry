@@ -4,40 +4,62 @@
   "title": "loadout repository bindings",
   "type": "object",
   "additionalProperties": false,
-  "required": ["repositories"],
+  "required": [],
   "properties": {
-    "$schema": { "type": "string" },
+    "$schema": {
+      "type": "string"
+    },
+    "user": {
+      "$ref": "#/definitions/servers",
+      "description": "Shared servers for every project on this machine, written to the user-scope client configs (~/.claude.json, ~/.cursor/mcp.json)."
+    },
     "repositories": {
       "type": ["object", "null"],
       "description": "Repository id (host/owner/name, or any git remote URL) -> servers it uses.",
       "additionalProperties": {
-        "oneOf": [
-          { "type": "null" },
-          {
-            "type": "array",
-            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+        "$ref": "#/definitions/servers"
+      }
+    }
+  },
+  "definitions": {
+    "servers": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
           },
-          {
-            "type": "object",
-            "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
-            "additionalProperties": {
-              "oneOf": [
-                { "type": "null" },
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "params": {
-                      "type": "object",
-                      "additionalProperties": { "type": ["string", "number", "boolean"] }
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "params": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": ["string", "number", "boolean"]
                     }
                   }
                 }
-              ]
-            }
+              }
+            ]
           }
-        ]
-      }
+        }
+      ]
     }
   }
 }

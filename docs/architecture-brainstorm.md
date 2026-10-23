@@ -885,7 +885,7 @@ Không làm ở MVP: environment overlay, semver từng server, Web UI, API, RBA
 
 ### Câu hỏi mở cho buổi brainstorm tiếp theo
 
-- MCP cá nhân (dev tự dùng, không gắn repo) có thuộc phạm vi không? Đề xuất: **không** — để ở user-scope của client.
+- MCP cá nhân (dev tự dùng, không gắn repo) có thuộc phạm vi không? Ban đầu đề xuất **không**. Đã đổi: khoá `user:` trong `bindings.yaml` + `loadout user …` ghi gộp vào user-scope của client (`~/.claude.json`, `~/.cursor/mcp.json`), chỉ đụng các entry do loadout ghi — xem README.
 - Monorepo: một repo nhiều service, mỗi service cần MCP khác nhau → manifest ở cấp thư mục con? (Client có hỗ trợ config theo thư mục con không?)
 - Cloud agents (agent chạy trong container từ repo clone mới): lấy secret bằng identity nào?
 - Ai review bảo mật cho server mới được đưa vào catalog?

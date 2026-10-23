@@ -11,10 +11,14 @@ export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex'
  */
 export class State {
   private files: Record<string, string> = {};
+  /** User-scope files (~/.claude.json…): only the `mcpServers` entries loadout wrote, by server name. */
+  private entries: Record<string, Record<string, string>> = {};
   constructor(private readonly path: string) {
     if (existsSync(path)) {
       try {
-        this.files = JSON.parse(readFileSync(path, 'utf8')).files ?? {};
+        const data = JSON.parse(readFileSync(path, 'utf8'));
+        this.files = data.files ?? {};
+        this.entries = data.entries ?? {};
       } catch {
         this.files = {};
       }
@@ -32,9 +36,23 @@ export class State {
   forget(file: string) {
     delete this.files[file];
   }
+  /** Names of the entries loadout wrote into a user-scope file. */
+  ownedEntries(file: string): string[] {
+    return Object.keys(this.entries[file] ?? {});
+  }
+  ownsEntry(file: string, name: string, entry: unknown) {
+    return this.entries[file]?.[name] === sha256(JSON.stringify(entry));
+  }
+  recordEntry(file: string, name: string, entry: unknown) {
+    (this.entries[file] ??= {})[name] = sha256(JSON.stringify(entry));
+  }
+  forgetEntry(file: string, name: string) {
+    delete this.entries[file]?.[name];
+    if (this.entries[file] && !Object.keys(this.entries[file]).length) delete this.entries[file];
+  }
   save() {
     mkdirSync(dirname(this.path), { recursive: true });
-    writeFileSync(this.path, JSON.stringify({ version: 1, files: this.files }, null, 2) + '\n');
+    writeFileSync(this.path, JSON.stringify({ version: 1, files: this.files, entries: this.entries }, null, 2) + '\n');
   }
 }
 

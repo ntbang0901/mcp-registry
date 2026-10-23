@@ -1,12 +1,15 @@
 # yaml-language-server: $schema=./schemas/bindings.schema.json
 #
-# Which repositories use which shared MCP servers. Keys are repository ids (host/owner/name);
-# any git remote URL also works. Two forms:
+# Which repositories use which shared MCP servers, and which ones every project on this machine gets
+# (`user:`, written to ~/.claude.json and ~/.cursor/mcp.json by `loadout user`). Keys are repository ids
+# (host/owner/name); any git remote URL also works. Two forms:
 #
 #   github.com/acme/app: [linkup, context7]                       # list
 #   github.com/acme/api:                                          # map, with per-repository params
 #     postgres: { params: { database: app_db, password: env://APP_DB_PASSWORD } }
 #     linkup:
 #
-# Usually edited for you by `loadout ui`, `loadout import`, `loadout attach` and `loadout set`.
+#   user: [context7, linkup]                                      # same two forms
+#
+# Usually edited for you by `loadout ui`, `loadout import`, `loadout attach`, `loadout set` and `loadout user`.
 repositories: {}

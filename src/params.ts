@@ -1,6 +1,6 @@
-import { attachServers, setBindingParams } from './bindings-edit.js';
+import { attachServers, setBindingParams, USER_SCOPE } from './bindings-edit.js';
 import { LoadoutError } from './errors.js';
-import type { Registry } from './registry.js';
+import { USER_CONTEXT, type Registry } from './registry.js';
 import { repoContext } from './repo.js';
 import { resolveParams } from './resolve.js';
 import type { ParamSpec, ParamValue, ServerDef } from './types.js';
@@ -33,7 +33,7 @@ export function requiredParams(def: ServerDef): string[] {
 }
 
 /**
- * Set a repository's param values for a shared server, after validating them.
+ * Set a repository's (or, with USER_SCOPE, the machine's) param values for a shared server, after validating them.
  * `replace` takes the given values as the complete set; otherwise they are merged into the current ones
  * (an empty value removes a param). With `attach`, the server is attached first if needed.
  */
@@ -51,8 +51,9 @@ export function updateBindingParams(
     }
     throw new LoadoutError(`Unknown shared server "${server}"`);
   }
-  const binding = registry.bindings.get(repo)?.find((b) => b.server === server);
-  if (!binding && !opts.attach) throw new LoadoutError(`${server} is not attached to ${repo}`);
+  const user = repo === USER_SCOPE;
+  const binding = (user ? registry.userBindings : registry.bindings.get(repo))?.find((b) => b.server === server);
+  if (!binding && !opts.attach) throw new LoadoutError(`${server} is not ${user ? 'in user scope' : `attached to ${repo}`}`);
   const next: Record<string, ParamValue> = opts.replace ? {} : { ...(binding?.params ?? {}) };
   for (const [name, raw] of Object.entries(values)) {
     const v = coerceParam(server, name, def.params?.[name], raw);
@@ -60,7 +61,7 @@ export function updateBindingParams(
     else next[name] = v;
   }
   try {
-    resolveParams(def, { server, params: next }, repoContext(repo, `/path/to/${repo.split('/').pop()}`));
+    resolveParams(def, { server, params: next }, user ? USER_CONTEXT : repoContext(repo, `/path/to/${repo.split('/').pop()}`));
   } catch (e) {
     throw new LoadoutError((e as Error).message);
   }

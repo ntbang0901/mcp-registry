@@ -20,8 +20,39 @@ function loadDoc(path: string): Document {
     doc.set('repositories', repos);
   }
   // `repositories: {}` is a flow map; keep one repository per line once entries are added.
-  (repos as YAMLMap).flow = false;
+  if ((repos as YAMLMap).items.length) (repos as YAMLMap).flow = false;
   return doc;
+}
+
+/** Pseudo repository id for the top-level `user:` entry (servers for every project on this machine). */
+export const USER_SCOPE = '@user';
+
+const keyName = (key: unknown) => (isScalar(key) ? String(key.value) : String(key));
+
+/** The `repo: servers` pair of a repository (or of `user:`), created as an empty flow list when asked. */
+function findPair(doc: Document, id: string, create = false) {
+  const top = doc.contents as YAMLMap;
+  const repos = doc.get('repositories') as YAMLMap;
+  const find = () => (id === USER_SCOPE ? top.items.find((p) => keyName(p.key) === 'user') : findRepoPair(repos, id));
+  let pair = find();
+  if (!pair && create) {
+    const seq = new YAMLSeq();
+    seq.flow = true;
+    if (id === USER_SCOPE) {
+      // Above `repositories:`, after the header comment.
+      top.items.unshift(doc.createPair('user', seq) as (typeof top.items)[number]);
+      const first = top.items[1]?.key as { commentBefore?: string } | undefined;
+      if (first?.commentBefore) {
+        (top.items[0].key as { commentBefore?: string }).commentBefore = first.commentBefore;
+        first.commentBefore = undefined;
+      }
+    } else {
+      repos.flow = false;
+      repos.set(id, seq);
+    }
+    pair = find();
+  }
+  return pair;
 }
 
 function findRepoPair(repos: YAMLMap, id: string) {
@@ -47,15 +78,8 @@ function serverNames(value: unknown): string[] {
  */
 export function attachServers(path: string, id: string, servers: string[]): string[] {
   const doc = loadDoc(path);
-  const repos = doc.get('repositories') as YAMLMap;
-  let pair = findRepoPair(repos, id);
-  const created = !pair;
-  if (!pair) {
-    const seq = new YAMLSeq();
-    seq.flow = true;
-    repos.set(id, seq);
-    pair = findRepoPair(repos, id)!;
-  }
+  const created = !findPair(doc, id);
+  const pair = findPair(doc, id, true)!;
   const existing = new Set(serverNames(pair.value));
   const added = servers.filter((s, i) => !existing.has(s) && servers.indexOf(s) === i);
   if (isMap(pair.value)) {
@@ -75,8 +99,7 @@ export function attachServers(path: string, id: string, servers: string[]): stri
 /** Remove servers from a repository. The repository stays listed (possibly with []), so sync cleans up. */
 export function detachServers(path: string, id: string, servers: string[]): string[] {
   const doc = loadDoc(path);
-  const repos = doc.get('repositories') as YAMLMap;
-  const pair = findRepoPair(repos, id);
+  const pair = findPair(doc, id);
   if (!pair) return [];
   const existing = serverNames(pair.value);
   const removed = servers.filter((s) => existing.includes(s));
@@ -95,8 +118,7 @@ export function detachServers(path: string, id: string, servers: string[]): stri
  */
 export function setBindingParams(path: string, id: string, server: string, params: Record<string, ParamValue>): void {
   const doc = loadDoc(path);
-  const repos = doc.get('repositories') as YAMLMap;
-  const pair = findRepoPair(repos, id);
+  const pair = findPair(doc, id);
   if (!pair) throw new LoadoutError(`${id} is not in bindings.yaml`);
   const current = new Map<string, Record<string, ParamValue>>();
   if (isMap(pair.value)) {

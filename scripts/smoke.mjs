@@ -16,6 +16,7 @@ const env = {
   LOADOUT_CONFIG: join(tmp, 'config.yaml'),
   LOADOUT_STATE_DIR: join(tmp, 'state'),
   XDG_DATA_HOME: join(tmp, 'share'),
+  LOADOUT_HOME: join(tmp, 'home'),
   LINKUP_API_KEY: 'smoke',
 };
 let failures = 0;
@@ -136,6 +137,46 @@ check(
     existsSync(join(other, 'Internal Tool', '.cursor', 'mcp.json')),
 );
 check('sync --all includes it', /local\/internal-tool/.test(run(['sync', '--all'])));
+
+// User scope: servers for every project on the machine, merged into ~/.claude.json and ~/.cursor/mcp.json.
+const home = env.LOADOUT_HOME;
+mkdirSync(home, { recursive: true });
+writeFileSync(
+  join(home, '.claude.json'),
+  JSON.stringify({
+    numStartups: 7,
+    mcpServers: {
+      gh: { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: 'Bearer ghp_SMOKE' } },
+    },
+  }),
+);
+const userImported = run(['user', 'import']);
+const claudeJson = () => readFileSync(join(home, '.claude.json'), 'utf8');
+check('user import takes over existing user-scope servers', /added gh/.test(userImported), userImported);
+check(
+  'user import keeps other settings and drops the key',
+  claudeJson().includes('"numStartups": 7') && !claudeJson().includes('ghp_SMOKE'),
+  claudeJson(),
+);
+const promoted = run(['user', 'add', 'context7', '--from-projects']);
+check(
+  'user add --from-projects moves a server to user scope',
+  /added to user scope: context7/.test(promoted) && JSON.parse(claudeJson()).mcpServers.context7 !== undefined,
+  promoted,
+);
+check(
+  'and removes it from the projects using it',
+  !readFileSync(join(app, '.mcp.json'), 'utf8').includes('context7') && existsSync(join(home, '.cursor', 'mcp.json')),
+);
+run(['user', 'add', 'memory', '--', 'npx', '-y', '@modelcontextprotocol/server-memory@2025.9.25']);
+check('user add defines a new server', JSON.parse(claudeJson()).mcpServers.memory?.args?.includes('-y'));
+check('user list is clean', /memory\s+up to date/.test(run(['user'])));
+run(['user', 'remove', 'memory', '--delete']);
+check(
+  'user remove deletes the entry and the definition',
+  !JSON.parse(claudeJson()).mcpServers.memory && !existsSync(join(registry, 'servers', 'memory.yaml')),
+);
+check('registry valid with user scope', /0 error\(s\)/.test(run(['validate'])));
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall smoke checks passed');
 process.exit(failures ? 1 : 0);

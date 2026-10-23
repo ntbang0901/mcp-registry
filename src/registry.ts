@@ -22,6 +22,8 @@ export interface Registry {
   repoServers: Map<string, Map<string, ServerDef>>;
   /** Normalized repository id -> bindings, in declaration order. */
   bindings: Map<string, Binding[]>;
+  /** Shared servers for every project on this machine (`user:` in bindings.yaml), written to user-scope client configs. */
+  userBindings: Binding[];
   bindingsPath: string;
 }
 
@@ -39,6 +41,43 @@ export function knownRepos(registry: Registry): string[] {
 
 /** Names that usually hold credentials (env vars, headers, query params, CLI flags). */
 export const SECRET_NAME = /(api[_-]?key|apikey|token|secret|passw(or)?d|credential|authorization|private[_-]?key)/i;
+
+/** Template context for user-scope servers: they belong to no repository, so `{{ repo.* }}` is rejected. */
+export const USER_CONTEXT = repoContext('user/user', '/');
+
+/** Template strings of a server definition (transport fields and param defaults). */
+function serverTemplates(def: ServerDef): string[] {
+  const t = def.transport;
+  const out =
+    t.type === 'http'
+      ? [t.url, ...Object.values(t.headers ?? {})]
+      : [t.command ?? '', ...(t.args ?? []), ...Object.values(t.env ?? {})];
+  for (const p of Object.values(def.params ?? {})) if (typeof p.default === 'string') out.push(p.default);
+  return out;
+}
+
+/** `{{ repo.* }}` variables a server uses; such a server only makes sense inside a repository. */
+export function repoVarsOf(def: ServerDef): string[] {
+  const vars = new Set<string>();
+  for (const tpl of serverTemplates(def)) {
+    try {
+      for (const r of templateRefs(tpl)) if (r.scope === 'repo') vars.add(r.name);
+    } catch {
+      /* reported by lintServer */
+    }
+  }
+  return [...vars];
+}
+
+/** Parse one bindings.yaml entry: a list of server names, or a map of server -> { params }. */
+function parseBindingList(value: unknown): Binding[] {
+  return Array.isArray(value)
+    ? value.map((server: string) => ({ server, params: {} }))
+    : Object.entries((value ?? {}) as Record<string, { params?: Record<string, ParamValue> } | null>).map(([server, b]) => ({
+        server,
+        params: b?.params ?? {},
+      }));
+}
 
 let validators: { server: ValidateFunction; bindings: ValidateFunction } | undefined;
 function getValidators() {
@@ -179,12 +218,14 @@ export function loadRegistry(root: string): { registry: Registry; problems: Prob
 
   const bindingsPath = join(root, BINDINGS_FILE);
   const bindings = new Map<string, Binding[]>();
+  let userBindings: Binding[] = [];
   if (existsSync(bindingsPath)) {
     const data = parseYaml(bindingsPath, problems);
     if (data !== undefined && !validateBindings(data ?? {})) {
       for (const m of schemaMessages(validateBindings.errors)) problems.push({ level: 'error', file: BINDINGS_FILE, message: m });
     } else if (data) {
-      const repos = (data as { repositories: Record<string, unknown> | null }).repositories ?? {};
+      userBindings = parseUserBindings((data as { user?: unknown }).user, servers, problems);
+      const repos = (data as { repositories?: Record<string, unknown> | null }).repositories ?? {};
       for (const [key, value] of Object.entries(repos)) {
         let id: string;
         try {
@@ -197,11 +238,7 @@ export function loadRegistry(root: string): { registry: Registry; problems: Prob
           problems.push({ level: 'error', file: BINDINGS_FILE, message: `repository "${id}" is listed more than once` });
           continue;
         }
-        const list: Binding[] = Array.isArray(value)
-          ? value.map((server: string) => ({ server, params: {} }))
-          : Object.entries((value ?? {}) as Record<string, { params?: Record<string, ParamValue> } | null>).map(
-              ([server, b]) => ({ server, params: b?.params ?? {} }),
-            );
+        const list = parseBindingList(value);
         const seen = new Set<string>();
         const ctx = repoContext(id, `/path/to/${id.split('/').pop()}`);
         for (const b of list) {
@@ -238,7 +275,53 @@ export function loadRegistry(root: string): { registry: Registry; problems: Prob
       }
     }
   }
-  return { registry: { root, servers, repoServers, bindings, bindingsPath }, problems };
+  for (const [id, list] of bindings) {
+    for (const b of list) {
+      if (userBindings.some((u) => u.server === b.server)) {
+        problems.push({
+          level: 'warning',
+          file: BINDINGS_FILE,
+          message: `${id} → ${b.server}: also in user scope; inside this repository the project config wins`,
+        });
+      }
+    }
+  }
+  return { registry: { root, servers, repoServers, bindings, userBindings, bindingsPath }, problems };
+}
+
+function parseUserBindings(value: unknown, servers: Map<string, ServerDef>, problems: Problem[]): Binding[] {
+  const list = parseBindingList(value);
+  const seen = new Set<string>();
+  const out: Binding[] = [];
+  for (const b of list) {
+    const where = `user → ${b.server}`;
+    const err = (message: string) => problems.push({ level: 'error', file: BINDINGS_FILE, message: `${where}: ${message}` });
+    if (seen.has(b.server)) {
+      err('listed twice');
+      continue;
+    }
+    seen.add(b.server);
+    const def = servers.get(b.server);
+    if (!def) {
+      err(`unknown server (no ${SERVERS_DIR}/${b.server}.yaml)`);
+      continue;
+    }
+    if (def.status === 'deprecated')
+      problems.push({ level: 'warning', file: BINDINGS_FILE, message: `${where}: server is deprecated` });
+    const vars = repoVarsOf(def);
+    if (vars.length) {
+      err(`uses {{ repo.${vars[0]} }}, which has no value outside a repository; attach it to repositories instead`);
+      continue;
+    }
+    try {
+      resolveServer(def, b, USER_CONTEXT);
+    } catch (e) {
+      err((e as Error).message);
+      continue;
+    }
+    out.push(b);
+  }
+  return out;
 }
 
 function loadRepoServers(root: string, problems: Problem[]): Map<string, Map<string, ServerDef>> {
